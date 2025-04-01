@@ -10,6 +10,7 @@ const TextSegmentHandler = ({
   autoSave,
   loadProjectTimeline,
   API_BASE_URL,
+  timelineRef
 }) => {
   const addTextToTimeline = async (targetLayer = 0, startTime = 0, updatedTextSettings) => {
     if (!sessionId || !projectId) return;
@@ -75,8 +76,8 @@ const TextSegmentHandler = ({
   };
 
   const handleTextDrop = async (e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators) => {
-    if (!sessionId) return;
-    const timelineRect = e.currentTarget.getBoundingClientRect();
+    if (!sessionId || !timelineRef.current) return null;
+    const timelineRect = timelineRef.current.getBoundingClientRect(); // Use ref instead of e.currentTarget
     const layerHeight = 40;
     const reversedIndex = Math.floor((mouseY - timelineRect.top) / layerHeight);
     let targetLayer = videoLayers.length - reversedIndex;
@@ -126,8 +127,8 @@ const TextSegmentHandler = ({
     const updatedItem = { ...draggingItem, startTime: adjustedStartTime, layer: actualLayerIndex };
     newVideoLayers[actualLayerIndex].push(updatedItem);
     setVideoLayers(newVideoLayers);
-    saveHistory(newVideoLayers, []); // Pass empty audioLayers since only videoLayers changed
-    autoSave(newVideoLayers, []); // Pass empty audioLayers since only videoLayers changed
+    saveHistory(newVideoLayers, []);
+    autoSave(newVideoLayers, []);
     await updateTextSegment(draggingItem.id, updatedItem, adjustedStartTime, actualLayerIndex);
     return null;
   };

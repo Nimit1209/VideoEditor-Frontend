@@ -12,12 +12,19 @@ const AudioSegmentHandler = ({
   API_BASE_URL,
   timelineRef,
 }) => {
-  const updateAudioSegment = async (audioSegmentId, newStartTime, newLayer, newDuration) => {
+  const updateAudioSegment = async (audioSegmentId, newStartTime, newLayer, newDuration, startTimeWithinAudio, endTimeWithinAudio,draggingItem) => {
     if (!projectId || !sessionId) return;
     try {
       const token = localStorage.getItem('token');
-      const layer = audioLayers[Math.abs(newLayer) - 1];
-      const item = layer.find(i => i.id === audioSegmentId);
+      // Use draggingItem directly if provided, otherwise search in audioLayers
+      let item = draggingItem;
+      if (!item) {
+        const layer = audioLayers[Math.abs(newLayer) - 1];
+        item = layer.find(i => i.id === audioSegmentId);
+      }
+      if (!item) {
+        throw new Error(`Audio segment with ID ${audioSegmentId} not found in layer ${newLayer}`);
+      }
       const originalDuration = item.duration;
       const timelineEndTime = newStartTime + (newDuration || originalDuration);
       const requestBody = {
@@ -25,8 +32,8 @@ const AudioSegmentHandler = ({
         timelineStartTime: newStartTime,
         timelineEndTime: timelineEndTime,
         layer: newLayer,
-        startTime: item.startTimeWithinAudio || 0,
-        endTime: item.endTimeWithinAudio || newDuration || originalDuration,
+        startTime: startTimeWithinAudio !== undefined ? startTimeWithinAudio : item.startTimeWithinAudio || 0,
+        endTime: endTimeWithinAudio !== undefined ? endTimeWithinAudio : item.endTimeWithinAudio || (item.startTimeWithinAudio || 0) + (newDuration || originalDuration),
       };
       await axios.put(
         `${API_BASE_URL}/projects/${projectId}/update-audio`,
@@ -36,50 +43,44 @@ const AudioSegmentHandler = ({
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-      console.log(`Updated audio segment ${audioSegmentId} to start at ${newStartTime}s, end at ${timelineEndTime}s, layer ${newLayer}`);
+      console.log(`Updated audio segment ${audioSegmentId} to start at ${newStartTime}s, end at ${timelineEndTime}s, layer ${newLayer}, startTimeWithinAudio at ${startTimeWithinAudio}s, endTimeWithinAudio at ${endTimeWithinAudio}s`);
     } catch (error) {
-      console.error('Error updating audio segment position:', error);
+      console.error('Error updating audio segment:', error);
     }
   };
 
   const handleAudioDrop = async (e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators) => {
-    if (!sessionId) return;
-
-    if (!timelineRef.current) {
-      console.error('Timeline ref is not available');
+    if (!sessionId || !timelineRef.current) {
+      console.error('Session ID or timeline ref missing');
       return undefined;
     }
 
     const timelineRect = timelineRef.current.getBoundingClientRect();
     const layerHeight = 40;
     const relativeMouseY = mouseY - timelineRect.top;
-
-    // Ensure timelineRef.current is available before querying DOM elements
-    const timelineLayers = timelineRef.current.querySelectorAll('.timeline-layer');
-    if (!timelineLayers) {
-      console.error('Timeline layers not found');
-      return undefined;
-    }
-
-    const totalVideoLayers = timelineLayers.length - audioLayers.length - 2; // Subtract audio layers and two "Drop to create new layer" areas
+    const totalVideoLayers = timelineRef.current.querySelectorAll('.timeline-layer').length - audioLayers.length - 2;
     const reversedIndex = Math.floor(relativeMouseY / layerHeight);
-    let targetLayerIndex;
 
-    // Determine if the drop is in the audio layers section
-    if (reversedIndex <= totalVideoLayers) {
-      // Dropped in video layers or above
-      console.log('Cannot drop audio in video layers');
+    // Total layers include video layers, audio layers, and two "Drop to create new layer" areas
+    const audioLayerStartIndex = totalVideoLayers + 1; // After video layers and top drop area
+    const audioLayerEndIndex = totalVideoLayers + 1 + audioLayers.length; // Before bottom drop area
+
+    let targetLayerIndex;
+    if (reversedIndex < audioLayerStartIndex) {
+      console.log('Cannot drop audio in video layers or top drop area');
       return undefined;
-    } else if (reversedIndex >= totalVideoLayers + 1 && reversedIndex < totalVideoLayers + 1 + audioLayers.length) {
-      // Dropped in audio layers
-      targetLayerIndex = totalVideoLayers + audioLayers.length - reversedIndex;
+    } else if (reversedIndex >= audioLayerStartIndex && reversedIndex < audioLayerEndIndex) {
+      // Map directly to audio layer index (top-down order)
+      targetLayerIndex = reversedIndex - audioLayerStartIndex;
     } else {
-      // Dropped in "Drop to create new layer" for audio
-      targetLayerIndex = audioLayers.length;
+      // Dropped in bottom "Drop to create new layer" area
+      targetLayerIndex = audioLayers.length; // New audio layer
     }
 
     targetLayerIndex = Math.max(0, targetLayerIndex);
-    const backendLayer = -(targetLayerIndex + 1); // Map frontend layer 0 to backend -1, 1 to -2, etc.
+    const backendLayer = -(targetLayerIndex + 1);
+
+    let newAudioLayers = audioLayers.map(layer => [...layer]); // Deep copy
 
     if (!draggingItem) {
       const dataString = e.dataTransfer.getData('application/json');
@@ -87,31 +88,29 @@ const AudioSegmentHandler = ({
         const data = JSON.parse(dataString);
         if (data.type === 'audio') {
           const audio = data.audio;
-          let dropTimePosition = (mouseX - timelineRect.left) / timeScale;
-          let newAudioLayers = [...audioLayers];
+          let adjustedStartTime = Math.max(0, (mouseX - timelineRect.left) / timeScale);
           while (newAudioLayers.length <= targetLayerIndex) newAudioLayers.push([]);
           const targetLayerAudios = newAudioLayers[targetLayerIndex];
-          let adjustedStartTime = Math.max(0, dropTimePosition);
           let hasOverlap = true;
+
           while (hasOverlap) {
-            hasOverlap = targetLayerAudios.some(existingAudio => {
-              const existingStart = existingAudio.startTime;
-              const existingEnd = existingStart + existingAudio.duration;
-              const newAudioEnd = adjustedStartTime + audio.duration;
-              return (adjustedStartTime < existingEnd && newAudioEnd > existingStart);
+            hasOverlap = targetLayerAudios.some(existing => {
+              const start = existing.startTime;
+              const end = start + existing.duration;
+              const newEnd = adjustedStartTime + audio.duration;
+              return adjustedStartTime < end && newEnd > start;
             });
             if (hasOverlap) {
-              const overlappingAudio = targetLayerAudios.find(existingAudio => {
-                const existingStart = existingAudio.startTime;
-                const existingEnd = existingStart + existingAudio.duration;
-                const newAudioEnd = adjustedStartTime + audio.duration;
-                return (adjustedStartTime < existingEnd && newAudioEnd > existingStart);
+              const overlapping = targetLayerAudios.find(existing => {
+                const start = existing.startTime;
+                const end = start + existing.duration;
+                const newEnd = adjustedStartTime + audio.duration;
+                return adjustedStartTime < end && newEnd > start;
               });
-              if (overlappingAudio) {
-                adjustedStartTime = overlappingAudio.startTime + overlappingAudio.duration;
-              } else break;
+              adjustedStartTime = overlapping.startTime + overlapping.duration;
             }
           }
+
           await axios.post(
             `${API_BASE_URL}/projects/${projectId}/add-project-audio-to-timeline`,
             {
@@ -119,13 +118,16 @@ const AudioSegmentHandler = ({
               layer: backendLayer,
               timelineStartTime: adjustedStartTime,
               timelineEndTime: adjustedStartTime + audio.duration,
+              startTime: 0,
+              endTime: audio.duration,
             },
             {
               params: { sessionId },
               headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
             }
           );
-          loadProjectTimeline();
+          await loadProjectTimeline();
+          return undefined;
         }
       }
       return undefined;
@@ -133,39 +135,63 @@ const AudioSegmentHandler = ({
 
     if (draggingItem.type !== 'audio') return undefined;
 
-    let actualLayerIndex = targetLayerIndex;
     const newStartTime = snapIndicators.length > 0
       ? snapIndicators[0].time - (snapIndicators[0].edge === 'end' ? draggingItem.duration : 0)
-      : (mouseX - timelineRect.left) / timeScale - dragOffset;
-    const adjustedStartTime = Math.max(0, newStartTime);
-    let newAudioLayers = [...audioLayers];
-    while (newAudioLayers.length <= actualLayerIndex) newAudioLayers.push([]);
+      : Math.max(0, (mouseX - timelineRect.left) / timeScale - dragOffset);
 
-    const hasOverlap = newAudioLayers[actualLayerIndex].some(audio => {
-      if (draggingItem && audio.id === draggingItem.id) return false;
-      const audioStart = audio.startTime;
-      const audioEnd = audioStart + audio.duration;
-      const newAudioEnd = adjustedStartTime + draggingItem.duration;
-      return (adjustedStartTime < audioEnd && newAudioEnd > audioStart);
+    console.log('Calculated newStartTime:', newStartTime); // Debug log
+
+    while (newAudioLayers.length <= targetLayerIndex) newAudioLayers.push([]);
+
+    const hasOverlap = newAudioLayers[targetLayerIndex].some(audio => {
+      if (audio.id === draggingItem.id) return false;
+      const start = audio.startTime;
+      const end = start + audio.duration;
+      const newEnd = newStartTime + draggingItem.duration;
+      return newStartTime < end && newEnd > start;
     });
 
     if (hasOverlap) {
-      console.log('Overlap detected. Cannot place audio here.');
+      console.log('Overlap detected. Cannot move audio here.');
       return undefined;
     }
 
-    const frontendDragLayer = Math.abs(dragLayer) - 1;
-    if (actualLayerIndex === frontendDragLayer) {
-      newAudioLayers[actualLayerIndex] = newAudioLayers[actualLayerIndex].filter(a => a.id !== draggingItem.id);
+    const sourceLayerIndex = draggingItem.layer ? Math.abs(draggingItem.layer) - 1 : -1;
+    const isSameLayer = sourceLayerIndex === targetLayerIndex;
+
+    const updatedItem = {
+      ...draggingItem,
+      startTime: newStartTime,
+      layer: backendLayer,
+      timelineStartTime: newStartTime,
+      timelineEndTime: newStartTime + draggingItem.duration,
+    };
+
+    if (isSameLayer) {
+      const layer = newAudioLayers[targetLayerIndex];
+      const itemIndex = layer.findIndex(a => a.id === draggingItem.id);
+      layer[itemIndex] = updatedItem;
     } else {
-      newAudioLayers[frontendDragLayer] = newAudioLayers[frontendDragLayer].filter(a => a.id !== draggingItem.id);
+      if (sourceLayerIndex !== -1) {
+        newAudioLayers[sourceLayerIndex] = newAudioLayers[sourceLayerIndex].filter(a => a.id !== draggingItem.id);
+      }
+      newAudioLayers[targetLayerIndex].push(updatedItem);
     }
-    const updatedItem = { ...draggingItem, startTime: adjustedStartTime, layer: backendLayer };
-    newAudioLayers[actualLayerIndex].push(updatedItem);
+
     setAudioLayers(newAudioLayers);
-    saveHistory([], newAudioLayers); // Pass empty videoLayers since only audioLayers changed
-    autoSave([], newAudioLayers); // Pass empty videoLayers since only audioLayers changed
-    await updateAudioSegment(draggingItem.id, adjustedStartTime, backendLayer);
+    saveHistory([], newAudioLayers);
+    autoSave([], newAudioLayers);
+    await updateAudioSegment(
+      draggingItem.id,
+      newStartTime,
+      backendLayer,
+      draggingItem.duration,
+      updatedItem.startTimeWithinAudio, // Pass startTimeWithinAudio
+      updatedItem.endTimeWithinAudio ,   // Pass endTimeWithinAudio
+      updatedItem
+    );
+
+    return updatedItem;
   };
 
   const handleAudioSplit = async (item, clickTime, layerIndex) => {
@@ -178,13 +204,12 @@ const AudioSegmentHandler = ({
     const layer = newAudioLayers[layerIndex];
     const itemIndex = layer.findIndex(i => i.id === item.id);
 
-    const originalAudioStartTime = item.startTimeWithinAudio || 0;
-    const originalAudioEndTime = item.endTimeWithinAudio || item.duration;
-
+    const startWithinAudio = item.startTimeWithinAudio || 0;
     const firstPart = {
       ...item,
       duration: firstPartDuration,
-      endTimeWithinAudio: originalAudioStartTime + firstPartDuration,
+      timelineEndTime: item.startTime + firstPartDuration,
+      endTimeWithinAudio: startWithinAudio + firstPartDuration,
     };
     layer[itemIndex] = firstPart;
 
@@ -192,33 +217,43 @@ const AudioSegmentHandler = ({
       ...item,
       id: `${item.id}-split-${Date.now()}`,
       startTime: item.startTime + splitTime,
+      timelineStartTime: item.startTime + splitTime,
       duration: secondPartDuration,
-      startTimeWithinAudio: originalAudioStartTime + firstPartDuration,
-      endTimeWithinAudio: originalAudioEndTime,
+      timelineEndTime: item.startTime + item.duration,
+      startTimeWithinAudio: startWithinAudio + firstPartDuration,
+      endTimeWithinAudio: startWithinAudio + item.duration,
     };
     layer.push(secondPart);
 
     newAudioLayers[layerIndex] = layer;
     setAudioLayers(newAudioLayers);
-    saveHistory([], newAudioLayers); // Pass empty videoLayers since only audioLayers changed
+    saveHistory([], newAudioLayers);
 
-    await updateAudioSegment(item.id, item.startTime, item.layer, firstPartDuration);
+    await updateAudioSegment(
+      item.id,
+      item.startTime,
+      item.layer,
+      firstPartDuration,
+      firstPart.startTimeWithinAudio, // Pass startTimeWithinAudio
+      firstPart.endTimeWithinAudio,   // Pass endTimeWithinAudio
+      firstPart
+    );
     await axios.post(
       `${API_BASE_URL}/projects/${projectId}/add-project-audio-to-timeline`,
       {
         audioFileName: item.fileName,
         layer: item.layer,
         timelineStartTime: secondPart.startTime,
-        timelineEndTime: secondPart.startTime + secondPartDuration,
-        startTime: secondPart.startTimeWithinAudio,
-        endTime: secondPart.endTimeWithinAudio,
+        timelineEndTime: secondPart.timelineEndTime,
+        startTime: secondPart.startTimeWithinAudio, // Use startTimeWithinAudio
+        endTime: secondPart.endTimeWithinAudio,     // Use endTimeWithinAudio
       },
       {
         params: { sessionId },
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       }
     );
-    autoSave([], newAudioLayers); // Pass empty videoLayers since only audioLayers changed
+    autoSave([], newAudioLayers);
     await loadProjectTimeline();
   };
 

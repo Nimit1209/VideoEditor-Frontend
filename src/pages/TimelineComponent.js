@@ -11,10 +11,12 @@ import DraggingGhost from './DraggingGhost';
 import VideoSegmentHandler from './VideoSegmentHandler';
 import TextSegmentHandler from './TextSegmentHandler';
 import ImageSegmentHandler from './ImageSegmentHandler';
+import AudioSegmentHandler from './AudioSegmentHandler'; // New handler
 import GeneralSegmentHandler from './GeneralSegmentHandler';
 
 const TimelineComponent = ({
   videos,
+  audios,
   sessionId,
   projectId,
   totalDuration,
@@ -24,12 +26,16 @@ const TimelineComponent = ({
   addVideoToTimeline,
   onTimeUpdate,
   onSegmentSelect,
+  videoLayers,
+  audioLayers,
+  setVideoLayers,
+  setAudioLayers,
+  thumbnailsGenerated
 }) => {
   const [timelineVideos, setTimelineVideos] = useState([]);
   const [timeScale, setTimeScale] = useState(50);
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [layers, setLayers] = useState([[], [], []]);
   const [draggingItem, setDraggingItem] = useState(null);
   const [dragLayer, setDragLayer] = useState(null);
   const [dragOffset, setDragOffset] = useState(0);
@@ -64,22 +70,23 @@ const TimelineComponent = ({
   const playheadRef = useRef(null);
   const playIntervalRef = useRef(null);
 
-  const saveHistory = useCallback((newLayers) => {
+  const saveHistory = useCallback((newVideoLayers, newAudioLayers) => {
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(JSON.stringify(newLayers));
+    newHistory.push(JSON.stringify({ videoLayers: newVideoLayers, audioLayers: newAudioLayers }));
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
   }, [history, historyIndex]);
 
-  const autoSave = useCallback((newLayers) => {
+  const autoSave = useCallback((newVideoLayers, newAudioLayers) => {
     const autoSaveTimeout = setTimeout(async () => {
       if (!projectId || !sessionId) return;
       try {
         setIsSaving(true);
         const token = localStorage.getItem('token');
+        const segments = flattenLayersToSegments([...newVideoLayers, ...newAudioLayers]);
         await axios.post(
           `${API_BASE_URL}/projects/${projectId}/save`,
-          { timelineState: { segments: flattenLayersToSegments(newLayers) } },
+          { timelineState: { segments } },
           {
             params: { sessionId },
             headers: { Authorization: `Bearer ${token}` },
@@ -94,6 +101,53 @@ const TimelineComponent = ({
     }, 1000);
     return () => clearTimeout(autoSaveTimeout);
   }, [projectId, sessionId]);
+
+  const generateVideoThumbnail = async (videoPath) => {
+    const fullVideoPath = `${API_BASE_URL}/videos/${encodeURIComponent(videoPath.split('/').pop())}`;
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.src = fullVideoPath;
+      video.muted = true;
+      video.preload = 'metadata';
+
+      video.onloadeddata = () => {
+        video.currentTime = 1; // Capture frame at 1 second
+      };
+
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const maxWidth = 120;
+        const maxHeight = 80;
+        let width = video.videoWidth;
+        let height = video.videoHeight;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = (width * maxHeight) / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(video, 0, 0, width, height);
+        const thumbnail = canvas.toDataURL('image/jpeg');
+        resolve(thumbnail);
+      };
+
+      video.onerror = () => {
+        console.error(`Failed to load video for thumbnail: ${fullVideoPath}`);
+        resolve(null);
+      };
+    });
+  };
 
   const generateImageThumbnail = async (imagePath) => {
     const filename = imagePath.split('/').pop();
@@ -145,14 +199,16 @@ const TimelineComponent = ({
       const project = response.data;
       if (project && project.timelineState) {
         const timelineState = typeof project.timelineState === 'string' ? JSON.parse(project.timelineState) : project.timelineState;
-        const newLayers = [[], [], []];
+        const newVideoLayers = [[], [], []];
+        const newAudioLayers = [[], [], []];
 
         // Process video segments
         if (timelineState.segments && timelineState.segments.length > 0) {
           for (const segment of timelineState.segments) {
             const layerIndex = segment.layer || 0;
-            while (newLayers.length <= layerIndex) newLayers.push([]);
+            if (layerIndex < 0) continue; // Skip audio segments
             if (segment.sourceVideoPath) {
+              while (newVideoLayers.length <= layerIndex) newVideoLayers.push([]);
               let videoFileName = segment.sourceVideoPath;
               const normalizedVideoPath = videoFileName.startsWith('videos/') ? videoFileName.substring(7) : videoFileName;
               let video = videos.find(v => {
@@ -161,7 +217,8 @@ const TimelineComponent = ({
                 return normalizedVPath === normalizedVideoPath;
               });
               if (video) {
-                newLayers[layerIndex].push({
+                const thumbnail = (await generateVideoThumbnail(normalizedVideoPath)); // Use existing or generate
+                newVideoLayers[layerIndex].push({
                   ...video,
                   type: 'video',
                   id: segment.id,
@@ -174,32 +231,40 @@ const TimelineComponent = ({
                   scale: segment.scale || 1,
                   startTimeWithinVideo: segment.startTime,
                   endTimeWithinVideo: segment.endTime,
+                  thumbnail,
                 });
               }
             }
           }
         }
 
-        // Process image segments
+        // Process image segments from timelineState.imageSegments
         if (timelineState.imageSegments && timelineState.imageSegments.length > 0) {
-          for (const segment of timelineState.imageSegments) {
-            const layerIndex = segment.layer || 0;
-            while (newLayers.length <= layerIndex) newLayers.push([]);
-            const filename = segment.imagePath.split('/').pop();
+          for (const imageSegment of timelineState.imageSegments) {
+            const layerIndex = imageSegment.layer || 0;
+            if (layerIndex < 0) continue; // Skip if mistakenly in audio layer
+            while (newVideoLayers.length <= layerIndex) newVideoLayers.push([]);
+            const filename = imageSegment.imagePath.split('/').pop();
             const filePath = `${API_BASE_URL}/projects/${projectId}/images/${encodeURIComponent(filename)}`;
-            const thumbnail = await generateImageThumbnail(segment.imagePath);
-            newLayers[layerIndex].push({
-              id: segment.id,
+            const thumbnail = await generateImageThumbnail(imageSegment.imagePath);
+            newVideoLayers[layerIndex].push({
+              id: imageSegment.id,
               type: 'image',
               fileName: filename,
               filePath,
               thumbnail,
-              startTime: segment.timelineStartTime,
-              duration: segment.timelineEndTime - segment.timelineStartTime,
+              startTime: imageSegment.timelineStartTime,
+              duration: imageSegment.timelineEndTime - imageSegment.timelineStartTime,
               layer: layerIndex,
-              positionX: segment.positionX || 50,
-              positionY: segment.positionY || 50,
-              scale: segment.scale || 1,
+              positionX: imageSegment.positionX || 50,
+              positionY: imageSegment.positionY || 50,
+              scale: imageSegment.scale || 1,
+              opacity: imageSegment.opacity || 1.0,
+              width: imageSegment.width,
+              height: imageSegment.height,
+              effectiveWidth: imageSegment.effectiveWidth,
+              effectiveHeight: imageSegment.effectiveHeight,
+              maintainAspectRatio: imageSegment.maintainAspectRatio,
             });
           }
         }
@@ -208,8 +273,9 @@ const TimelineComponent = ({
         if (timelineState.textSegments && timelineState.textSegments.length > 0) {
           for (const textSegment of timelineState.textSegments) {
             const layerIndex = textSegment.layer || 0;
-            while (newLayers.length <= layerIndex) newLayers.push([]);
-            newLayers[layerIndex].push({
+            if (layerIndex < 0) continue;
+            while (newVideoLayers.length <= layerIndex) newVideoLayers.push([]);
+            newVideoLayers[layerIndex].push({
               id: textSegment.id,
               type: 'text',
               text: textSegment.text,
@@ -226,11 +292,35 @@ const TimelineComponent = ({
           }
         }
 
-        setLayers(newLayers);
+        // Process audio segments
+        if (timelineState.audioSegments && timelineState.audioSegments.length > 0) {
+          for (const audioSegment of timelineState.audioSegments) {
+            const backendLayer = audioSegment.layer || -1;
+            const layerIndex = Math.abs(backendLayer) - 1;
+            while (newAudioLayers.length <= layerIndex) newAudioLayers.push([]);
+            newAudioLayers[layerIndex].push({
+              id: audioSegment.id,
+              type: 'audio',
+              fileName: audioSegment.audioFileName || audioSegment.audioPath.split('/').pop(),
+              startTime: audioSegment.timelineStartTime || 0,
+              duration: (audioSegment.timelineEndTime - audioSegment.timelineStartTime) || 0,
+              timelineStartTime: audioSegment.timelineStartTime || 0,
+              timelineEndTime: audioSegment.timelineEndTime || 0,
+              layer: backendLayer,
+              startTimeWithinAudio: audioSegment.startTime || 0, // Map backend startTime
+              endTimeWithinAudio: audioSegment.endTime || (audioSegment.timelineEndTime - audioSegment.timelineStartTime) || 0, // Map backend endTime
+              displayName: audioSegment.audioFileName ? audioSegment.audioFileName.split('/').pop() : audioSegment.audioPath.split('/').pop(),
+              waveformImage: '/images/audio.jpeg',
+            });
+          }
+        }
+
+        setVideoLayers(newVideoLayers);
+        setAudioLayers(newAudioLayers);
         setHistory([]);
         setHistoryIndex(-1);
         let maxEndTime = 0;
-        newLayers.forEach(layer => {
+        [...newVideoLayers, ...newAudioLayers].forEach(layer => {
           layer.forEach(item => {
             const endTime = item.startTime + item.duration;
             if (endTime > maxEndTime) maxEndTime = endTime;
@@ -244,14 +334,14 @@ const TimelineComponent = ({
   };
 
   useEffect(() => {
-    if (projectId && sessionId && videos.length > 0) loadProjectTimeline();
+    if (projectId && sessionId && videos.length > 0 && thumbnailsGenerated) loadProjectTimeline();
   }, [projectId, sessionId, videos]);
 
   const videoHandler = VideoSegmentHandler({
     projectId,
     sessionId,
-    layers,
-    setLayers,
+    videoLayers,
+    setVideoLayers,
     addVideoToTimeline,
     saveHistory,
     autoSave,
@@ -263,19 +353,32 @@ const TimelineComponent = ({
   const textHandler = TextSegmentHandler({
     projectId,
     sessionId,
-    layers,
-    setLayers,
+    videoLayers,
+    setVideoLayers,
     saveHistory,
     autoSave,
     loadProjectTimeline,
     API_BASE_URL,
+    timelineRef
   });
 
   const imageHandler = ImageSegmentHandler({
     projectId,
     sessionId,
-    layers,
-    setLayers,
+    videoLayers,
+    setVideoLayers,
+    saveHistory,
+    autoSave,
+    loadProjectTimeline,
+    API_BASE_URL,
+    timelineRef,
+  });
+
+  const audioHandler = AudioSegmentHandler({
+    projectId,
+    sessionId,
+    audioLayers,
+    setAudioLayers,
     saveHistory,
     autoSave,
     loadProjectTimeline,
@@ -284,8 +387,10 @@ const TimelineComponent = ({
   });
 
   const generalHandler = GeneralSegmentHandler({
-    layers,
-    setLayers,
+    videoLayers,
+    audioLayers,
+    setVideoLayers,
+    setAudioLayers,
     timeScale,
     setSnapIndicators,
     draggingItem,
@@ -306,12 +411,13 @@ const TimelineComponent = ({
     updateSegmentPosition: videoHandler.updateSegmentPosition,
     updateTextSegment: textHandler.updateTextSegment,
     updateImageSegment: imageHandler.updateImageSegment,
+    updateAudioSegment: audioHandler.updateAudioSegment,
   });
 
   useEffect(() => {
     const calculateDuration = () => {
       let maxDuration = 0;
-      layers.forEach(layer => {
+      [...videoLayers, ...audioLayers].forEach(layer => {
         layer.forEach(item => {
           const endTime = item.startTime + item.duration;
           if (endTime > maxDuration) maxDuration = endTime;
@@ -320,17 +426,72 @@ const TimelineComponent = ({
       setTotalDuration(maxDuration > 0 ? maxDuration : 0);
     };
     calculateDuration();
-  }, [layers, setTotalDuration]);
+  }, [videoLayers, audioLayers, setTotalDuration]);
 
   const handleDrop = async (e) => {
     if (isSplitMode) return;
     e.preventDefault();
+    e.stopPropagation();
     const dragElements = document.querySelectorAll('.dragging');
     dragElements.forEach(el => el.classList.remove('dragging'));
     if (timelineRef.current) timelineRef.current.classList.remove('showing-new-layer');
+
+    // Reset all drag-related states unconditionally
+    setDraggingItem(null);
+    setDragLayer(null);
+    setDragOffset(0);
+    setSnapIndicators([]);
+
+
     const mouseX = e.clientX;
     const mouseY = e.clientY;
 
+    // Parse the drag data to determine the type
+    const dataString = e.dataTransfer.getData('application/json');
+    let dragData = null;
+    if (dataString) {
+      try {
+        dragData = JSON.parse(dataString);
+      } catch (error) {
+        console.error('Error parsing drag data:', error);
+      }
+    }
+
+    // Handle audio drop first if the dragged item is an audio
+    if (dragData?.type === 'audio' || (draggingItem && draggingItem.type === 'audio')) {
+      const audioDropResult = await audioHandler.handleAudioDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
+      if (audioDropResult === undefined) {
+        setDraggingItem(null);
+        setDragLayer(null);
+        setDragOffset(0);
+        setSnapIndicators([]);
+        return;
+      }
+    }
+
+    // Handle video drop
+    if (dragData?.type === 'media' || (draggingItem && draggingItem.type === 'video')) {
+      await videoHandler.handleVideoDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
+      setDraggingItem(null);
+      setDragLayer(null);
+      setDragOffset(0);
+      setSnapIndicators([]);
+      return;
+    }
+
+    // Handle image drop
+    if (dragData?.type === 'photo' || (draggingItem && draggingItem.type === 'image')) {
+      const imageDropResult = await imageHandler.handleImageDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
+      if (imageDropResult === undefined) {
+        setDraggingItem(null);
+        setDragLayer(null);
+        setDragOffset(0);
+        setSnapIndicators([]);
+        return;
+      }
+    }
+
+    // Handle text drop
     const textDropResult = await textHandler.handleTextDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
     if (textDropResult) {
       setTextDialogPosition({ x: e.clientX, y: e.clientY });
@@ -343,16 +504,7 @@ const TimelineComponent = ({
       return;
     }
 
-    const imageDropResult = await imageHandler.handleImageDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
-    if (imageDropResult === undefined) {
-      setDraggingItem(null);
-      setDragLayer(null);
-      setDragOffset(0);
-      setSnapIndicators([]);
-      return;
-    }
-
-    await videoHandler.handleVideoDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
+    // Reset drag state if no handler processed the drop
     setDraggingItem(null);
     setDragLayer(null);
     setDragOffset(0);
@@ -366,8 +518,23 @@ const TimelineComponent = ({
     const clickY = e.clientY - rect.top;
     const clickTime = clickX / timeScale;
     const layerHeight = 40;
+    const totalVideoLayers = videoLayers.length;
+    const totalAudioLayers = audioLayers.length;
+    const totalLayers = totalVideoLayers + totalAudioLayers + 2; // +2 for the two "Drop to create new layer" areas
     const reversedIndex = Math.floor(clickY / layerHeight);
-    const clickedLayerIndex = layers.length - 1 - reversedIndex;
+    let clickedLayerIndex;
+    let isAudioLayer = false;
+
+    if (reversedIndex <= totalVideoLayers) {
+      // Clicked in video layers or the "Drop to create new layer" for video
+      clickedLayerIndex = totalVideoLayers - reversedIndex;
+    } else if (reversedIndex >= totalVideoLayers + 1 && reversedIndex < totalLayers - 1) {
+      // Clicked in audio layers
+      clickedLayerIndex = (totalLayers - 2 - reversedIndex);
+      isAudioLayer = true;
+    } else {
+      clickedLayerIndex = -1; // Clicked in "Drop to create new layer" for audio
+    }
 
     if (!isSplitMode) {
       setPlayhead(clickTime);
@@ -378,8 +545,11 @@ const TimelineComponent = ({
       if (onSegmentSelect) onSegmentSelect(null);
     }
 
-    if (clickedLayerIndex >= 0 && clickedLayerIndex < layers.length) {
-      const layerItems = layers[clickedLayerIndex];
+    const targetLayers = isAudioLayer ? audioLayers : videoLayers;
+    const adjustedLayerIndex = isAudioLayer ? clickedLayerIndex : clickedLayerIndex >= 0 ? clickedLayerIndex : 0;
+
+    if (adjustedLayerIndex >= 0 && adjustedLayerIndex < targetLayers.length) {
+      const layerItems = targetLayers[adjustedLayerIndex];
       const foundItem = layerItems.find(item => {
         const itemStart = item.startTime;
         const itemEnd = itemStart + item.duration;
@@ -387,8 +557,12 @@ const TimelineComponent = ({
       });
 
       if (foundItem) {
-        if (isSplitMode && foundItem.type === 'video') {
-          await videoHandler.handleVideoSplit(foundItem, clickTime, clickedLayerIndex);
+        if (isSplitMode && (foundItem.type === 'video' || foundItem.type === 'audio')) {
+          if (foundItem.type === 'video') {
+            await videoHandler.handleVideoSplit(foundItem, clickTime, adjustedLayerIndex);
+          } else {
+            await audioHandler.handleAudioSplit(foundItem, clickTime, adjustedLayerIndex);
+          }
           setIsSplitMode(false);
           return;
         }
@@ -448,13 +622,23 @@ const TimelineComponent = ({
     if (isSplitMode) return;
     setPlayingVideoId(videoId);
     let selected = null;
-    for (let i = 0; i < layers.length; i++) {
-      const item = layers[i].find(v => v.id === videoId);
+    for (let i = 0; i < videoLayers.length; i++) {
+      const item = videoLayers[i].find(v => v.id === videoId);
       if (item) {
         selected = { ...item, layerIndex: i };
         setSelectedSegment(selected);
         if (onVideoSelect && item.type !== 'text') onVideoSelect(item.startTime, item);
         break;
+      }
+    }
+    if (!selected) {
+      for (let i = 0; i < audioLayers.length; i++) {
+        const item = audioLayers[i].find(v => v.id === videoId);
+        if (item) {
+          selected = { ...item, layerIndex: i };
+          setSelectedSegment(selected);
+          break;
+        }
       }
     }
     if (onSegmentSelect) onSegmentSelect(selected);
@@ -469,7 +653,7 @@ const TimelineComponent = ({
             id: item.id,
             type: 'text',
             text: item.text,
-            layer: layerIndex,
+            layer: item.layer,
             timelineStartTime: item.startTime,
             timelineEndTime: item.startTime + item.duration,
             fontFamily: item.fontFamily,
@@ -484,7 +668,7 @@ const TimelineComponent = ({
             id: item.id,
             type: 'video',
             sourceVideoPath: item.filePath || item.filename,
-            layer: layerIndex,
+            layer: item.layer,
             timelineStartTime: item.startTime,
             timelineEndTime: item.startTime + item.duration,
             startTime: item.startTimeWithinVideo || 0,
@@ -498,12 +682,23 @@ const TimelineComponent = ({
             id: item.id,
             type: 'image',
             imageFileName: item.fileName,
-            layer: layerIndex,
+            layer: item.layer,
             timelineStartTime: item.startTime,
             timelineEndTime: item.startTime + item.duration,
             positionX: item.positionX,
             positionY: item.positionY,
             scale: item.scale,
+          });
+        } else if (item.type === 'audio') {
+          segments.push({
+            id: item.id,
+            type: 'audio',
+            audioFileName: item.fileName,
+            layer: item.layer,
+            timelineStartTime: item.startTime,
+            timelineEndTime: item.startTime + item.duration,
+            startTime: item.startTimeWithinAudio || 0,
+            endTime: item.endTimeWithinAudio || item.duration,
           });
         }
       });
@@ -515,26 +710,28 @@ const TimelineComponent = ({
     if (historyIndex <= 0) return;
     const newIndex = historyIndex - 1;
     setHistoryIndex(newIndex);
-    const previousLayers = JSON.parse(history[newIndex]);
-    setLayers(previousLayers);
-    autoSave(previousLayers);
+    const previousState = JSON.parse(history[newIndex]);
+    setVideoLayers(previousState.videoLayers);
+    setAudioLayers(previousState.audioLayers);
+    autoSave(previousState.videoLayers, previousState.audioLayers);
   };
 
   const handleRedo = () => {
     if (historyIndex >= history.length - 1) return;
     const newIndex = historyIndex + 1;
     setHistoryIndex(newIndex);
-    const nextLayers = JSON.parse(history[newIndex]);
-    setLayers(nextLayers);
-    autoSave(nextLayers);
+    const nextState = JSON.parse(history[newIndex]);
+    setVideoLayers(nextState.videoLayers);
+    setAudioLayers(nextState.audioLayers);
+    autoSave(nextState.videoLayers, nextState.audioLayers);
   };
 
   useEffect(() => {
-    if (layers.length > 0 && history.length === 0) {
-      const timer = setTimeout(() => saveHistory(layers), 100);
+    if (videoLayers.length > 0 || audioLayers.length > 0) {
+      const timer = setTimeout(() => saveHistory(videoLayers, audioLayers), 100);
       return () => clearTimeout(timer);
     }
-  }, [layers, history.length, saveHistory]);
+  }, [videoLayers, audioLayers, history.length, saveHistory]);
 
   const openAddTextDialog = () => {
     const startTime = currentTime || 0;
@@ -548,14 +745,14 @@ const TimelineComponent = ({
       });
     };
     let targetLayer = -1;
-    for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
-      if (hasSpaceInLayer(layers[layerIndex])) {
+    for (let layerIndex = 0; layerIndex < videoLayers.length; layerIndex++) {
+      if (hasSpaceInLayer(videoLayers[layerIndex])) {
         targetLayer = layerIndex;
         break;
       }
     }
-    if (targetLayer === -1) targetLayer = layers.length;
-    setTextDialogPosition({ x: window.innerWidth / 2, y: window.innerHeight / 3 });
+    if (targetLayer === -1) targetLayer = videoLayers.length;
+    setTextDialogPosition({ x: window.innerWidth / 3, y: window.innerHeight / 3 });
     setShowTextDialog(true);
     setEditingTextSegment({ isNew: true, layer: targetLayer, startTime });
   };
@@ -603,10 +800,10 @@ const TimelineComponent = ({
           >
             <div className="layer-label">Drop to create new layer</div>
           </div>
-          {[...layers].reverse().map((layer, reversedIndex) => {
-            const layerIndex = layers.length - 1 - reversedIndex;
+          {[...videoLayers].reverse().map((layer, reversedIndex) => {
+            const layerIndex = videoLayers.length - 1 - reversedIndex;
             return (
-              <div key={`layer-${layerIndex}`} className="timeline-layer" onDragOver={generalHandler.handleDragOver} onDrop={handleDrop}>
+              <div key={`video-layer-${layerIndex}`} className="timeline-layer" onDragOver={generalHandler.handleDragOver} onDrop={handleDrop}>
                 <TimelineLayer
                   layer={layer}
                   layerIndex={layerIndex}
@@ -627,8 +824,33 @@ const TimelineComponent = ({
               </div>
             );
           })}
-          <SnapIndicators snapIndicators={snapIndicators} timeScale={timeScale} layers={layers} />
-          <DraggingGhost draggingItem={draggingItem} snapIndicators={snapIndicators} timeScale={timeScale} dragLayer={dragLayer} layers={layers} />
+          <div className="timeline-layer audio-section-label">
+            <div className="layer-label">Audio</div>
+          </div>
+          {[...audioLayers].map((layer, index) => (
+            <div key={`audio-layer-${-(index + 1)}`} className="timeline-layer" onDragOver={generalHandler.handleDragOver} onDrop={handleDrop}>
+              <TimelineLayer
+                layer={layer}
+                layerIndex={(index)} // Use backend layer convention
+                timeScale={timeScale}
+                handleDragStart={generalHandler.handleDragStart}
+                handleResizeStart={generalHandler.handleResizeStart}
+                playingVideoId={playingVideoId}
+                handleVideoSelect={handleVideoSelect}
+                handleEditTextSegment={() => {}}
+                selectedSegmentId={selectedSegment ? selectedSegment.id : null}
+              />
+            </div>
+          ))}
+          <div
+            className="timeline-layer new-layer-drop-area"
+            onDragOver={e => e.preventDefault()}
+            onDrop={handleDrop}
+          >
+            <div className="layer-label">Drop to create new layer</div>
+          </div>
+          <SnapIndicators snapIndicators={snapIndicators} timeScale={timeScale} layers={[...videoLayers, ...audioLayers]} />
+          <DraggingGhost draggingItem={draggingItem} snapIndicators={snapIndicators} timeScale={timeScale} dragLayer={dragLayer} layers={[...videoLayers, ...audioLayers]} />
         </div>
       </div>
       {showTextDialog && (

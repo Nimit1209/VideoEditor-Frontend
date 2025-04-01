@@ -113,43 +113,40 @@ const ImageSegmentHandler = ({
         }
       );
       console.log(`Updated image segment ${segmentId}`);
-      await loadProjectTimeline();
+      // Removed loadProjectTimeline() to prevent overwriting local state
     } catch (error) {
       console.error('Error updating image segment:', error);
+      // Optionally, reload the timeline if the update fails to ensure consistency
+      await loadProjectTimeline();
     }
   };
 
   const handleImageDrop = async (e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!sessionId) return;
-
     if (!timelineRef.current) {
       console.error('Timeline ref is not available');
       return;
     }
-
     const timelineRect = timelineRef.current.getBoundingClientRect();
     const layerHeight = 40;
     const relativeMouseY = mouseY - timelineRect.top;
-
     const timelineLayers = timelineRef.current.querySelectorAll('.timeline-layer');
     if (!timelineLayers) {
       console.error('Timeline layers not found');
       return;
     }
-
     const totalVideoLayers = videoLayers.length;
     const reversedIndex = Math.floor(relativeMouseY / layerHeight);
     let targetLayer;
-
     if (reversedIndex <= totalVideoLayers) {
       targetLayer = totalVideoLayers - reversedIndex;
     } else {
       console.log('Cannot drop image in audio layers');
       return;
     }
-
-    targetLayer = Math.max(0, Math.min(targetLayer, videoLayers.length));
-
+    targetLayer = Math.max(0, Math.min(targetLayer, videoLayers.length - 1));
     if (!draggingItem) {
       const dataString = e.dataTransfer.getData('application/json');
       if (dataString) {
@@ -159,8 +156,6 @@ const ImageSegmentHandler = ({
           let dropTimePosition = (mouseX - timelineRect.left) / timeScale;
           let adjustedStartTime = Math.max(0, dropTimePosition);
           const duration = photo.duration || 5;
-
-          // Check for overlaps and adjust start time
           let newVideoLayers = [...videoLayers];
           while (newVideoLayers.length <= targetLayer) newVideoLayers.push([]);
           const targetLayerItems = newVideoLayers[targetLayer];
@@ -184,17 +179,13 @@ const ImageSegmentHandler = ({
               } else break;
             }
           }
-
-          // Add to backend and let loadProjectTimeline handle state update
+          console.log(`Dropping photo: ${photo.fileName} at layer ${targetLayer}, time ${adjustedStartTime}`);
           await addImageToTimeline(photo.fileName, targetLayer, adjustedStartTime, adjustedStartTime + duration);
-          // Remove manual state update here; loadProjectTimeline will sync videoLayers
         }
       }
       return;
     }
-
     if (draggingItem.type !== 'image') return;
-
     let actualLayerIndex = targetLayer;
     const newStartTime = snapIndicators.length > 0
       ? snapIndicators[0].time - (snapIndicators[0].edge === 'end' ? draggingItem.duration : 0)
@@ -210,12 +201,10 @@ const ImageSegmentHandler = ({
       const newEnd = adjustedStartTime + draggingItem.duration;
       return adjustedStartTime < itemEnd && newEnd > itemStart;
     });
-
     if (hasOverlap) {
       console.log('Overlap detected. Cannot place item here.');
       return;
     }
-
     if (actualLayerIndex === dragLayer) {
       newVideoLayers[actualLayerIndex] = newVideoLayers[actualLayerIndex].filter(v => v.id !== draggingItem.id);
     } else {
@@ -223,10 +212,20 @@ const ImageSegmentHandler = ({
     }
     const updatedItem = { ...draggingItem, startTime: adjustedStartTime, layer: actualLayerIndex };
     newVideoLayers[actualLayerIndex].push(updatedItem);
-    setVideoLayers(newVideoLayers);
-    saveHistory(newVideoLayers, []); // Pass empty audioLayers since only videoLayers changed
-    autoSave(newVideoLayers, []); // Pass empty audioLayers since only videoLayers changed
-    await updateImageSegment(draggingItem.id, adjustedStartTime, actualLayerIndex);
+    setVideoLayers(newVideoLayers); // Update state immediately
+    saveHistory(newVideoLayers, []);
+    autoSave(newVideoLayers, []);
+    await updateImageSegment(draggingItem.id, adjustedStartTime, actualLayerIndex, draggingItem.duration, {
+      positionX: draggingItem.positionX,
+      positionY: draggingItem.positionY,
+      scale: draggingItem.scale,
+      opacity: draggingItem.opacity,
+      width: draggingItem.width,
+      height: draggingItem.height,
+      effectiveWidth: draggingItem.effectiveWidth,
+      effectiveHeight: draggingItem.effectiveHeight,
+      maintainAspectRatio: draggingItem.maintainAspectRatio,
+    });
   };
 
   return { addImageToTimeline, updateImageSegment, handleImageDrop };

@@ -118,7 +118,13 @@ const GeneralSegmentHandler = ({
   const handleResizeStart = (e, item, layerIndex, edge) => {
     if (isSplitMode) return;
     e.stopPropagation();
-    setResizingItem({ ...item, layerIndex });
+    setResizingItem({
+      ...item,
+      layerIndex,
+      originalStartTime: item.startTime, // Explicitly store original startTime
+      originalStartWithinAudio: item.startTimeWithinAudio,
+      originalEndWithinAudio: item.endTimeWithinAudio,
+    });
     setResizeEdge(edge);
     e.preventDefault();
   };
@@ -129,38 +135,57 @@ const GeneralSegmentHandler = ({
       const timelineRect = timelineRef.current.getBoundingClientRect();
       const mouseX = e.clientX - timelineRect.left;
       const newTime = Math.max(0, mouseX / timeScale);
-      const totalVideoLayers = videoLayers.length;
       const isAudioLayer = resizingItem.layer < 0;
       const layerArray = isAudioLayer ? audioLayers : videoLayers;
       const layerIndex = isAudioLayer ? Math.abs(resizingItem.layer) - 1 : resizingItem.layerIndex;
       let newVideoLayers = [...videoLayers];
       let newAudioLayers = [...audioLayers];
       const layer = isAudioLayer ? newAudioLayers[layerIndex] : newVideoLayers[layerIndex];
-      const itemIndex = layer.findIndex(i => i.id === resizingItem.id);
-      if (itemIndex === -1) return;
+      const itemIndex = layer.findIndex((i) => i.id === resizingItem.id);
+      if (itemIndex === -1) {
+        console.error('Item not found during resize:', resizingItem);
+        return;
+      }
       const item = { ...layer[itemIndex] };
-      let newStartTime = item.startTime;
+
+      // Ensure startTime and within timings have valid defaults
+      const originalStartTime = item.startTime ?? resizingItem.startTime ?? 0;
+      const originalStartWithin = item.type === 'video'
+        ? (item.startTimeWithinVideo ?? 0)
+        : (item.startTimeWithinAudio ?? 0);
+      const originalEndWithin = item.type === 'video'
+        ? (item.endTimeWithinVideo ?? item.duration)
+        : (item.endTimeWithinAudio ?? item.duration);
+
+      let newStartTime = originalStartTime;
       let newDuration = item.duration;
-      let newStartWithin = item.startTimeWithinAudio || item.startTimeWithinVideo || 0;
-      let newEndWithin = item.endTimeWithinAudio || item.endTimeWithinVideo || item.duration;
+      let newStartWithin = originalStartWithin;
+      let newEndWithin = originalEndWithin;
 
       if (resizeEdge === 'left') {
-        const originalEndTime = item.startTime + item.duration;
-        newStartTime = Math.min(newTime, originalEndTime - 0.1);
+        const originalEndTime = originalStartTime + item.duration;
+        newStartTime = Math.min(newTime, originalEndTime - 0.1); // Minimum duration 0.1s
         newDuration = originalEndTime - newStartTime;
         if (item.type === 'video' || item.type === 'audio') {
-          newStartWithin = newStartWithin + (item.startTime - newStartTime);
+          const timeShift = newStartTime - originalStartTime;
+          newStartWithin = originalStartWithin + timeShift;
+          newStartWithin = Math.max(0, newStartWithin); // Prevent negative
+          newEndWithin = originalEndWithin; // End stays fixed
         }
       } else if (resizeEdge === 'right') {
-        const newEndTime = Math.max(newTime, item.startTime + 0.1);
-        newDuration = newEndTime - item.startTime;
+        const newEndTime = Math.max(newTime, originalStartTime + 0.1);
+        newDuration = newEndTime - originalStartTime;
         if (item.type === 'video' || item.type === 'audio') {
-          newEndWithin = newStartWithin + newDuration;
+          newStartWithin = originalStartWithin; // Start stays fixed
+          newEndWithin = originalStartWithin + newDuration;
         }
       }
 
+      // Update item properties
       item.startTime = newStartTime;
       item.duration = newDuration;
+      item.timelineStartTime = newStartTime;
+      item.timelineEndTime = newStartTime + newDuration;
       if (item.type === 'video') {
         item.startTimeWithinVideo = newStartWithin;
         item.endTimeWithinVideo = newEndWithin;
@@ -169,6 +194,7 @@ const GeneralSegmentHandler = ({
         item.endTimeWithinAudio = newEndWithin;
       }
       layer[itemIndex] = item;
+
       if (isAudioLayer) {
         newAudioLayers[layerIndex] = layer;
         setAudioLayers(newAudioLayers);
@@ -182,38 +208,57 @@ const GeneralSegmentHandler = ({
 
   const handleResizeEnd = async () => {
     if (!resizingItem) return;
+
     const isAudioLayer = resizingItem.layer < 0;
     const layerArray = isAudioLayer ? audioLayers : videoLayers;
     const layerIndex = isAudioLayer ? Math.abs(resizingItem.layer) - 1 : resizingItem.layerIndex;
     const layer = layerArray[layerIndex];
     const item = layer.find(i => i.id === resizingItem.id);
+
     if (item) {
       saveHistory(videoLayers, audioLayers);
       autoSave(videoLayers, audioLayers);
-      const newStartTime = resizeEdge === 'left' ? item.startTime : item.startTime;
+
+      const newStartTime = item.startTime;
       const newDuration = item.duration;
-      const updatedSettings = {
-        positionX: item.positionX,
-        positionY: item.positionY,
-        scale: item.scale,
-        opacity: item.opacity,
-        width: item.width,
-        height: item.height,
-        effectiveWidth: item.effectiveWidth,
-        effectiveHeight: item.effectiveHeight,
-        maintainAspectRatio: item.maintainAspectRatio,
-      };
-      if (item.type === 'text') {
+
+      if (item.type === 'video') {
+        await updateSegmentPosition(
+          item.id,
+          newStartTime,
+          item.layer,
+          newDuration,
+          item.startTimeWithinVideo,
+          item.endTimeWithinVideo
+        );
+      } else if (item.type === 'text') {
         const updatedTextSettings = { ...item, duration: newDuration };
         await updateTextSegment(item.id, updatedTextSettings, newStartTime, item.layer);
       } else if (item.type === 'image') {
+        const updatedSettings = {
+          positionX: item.positionX,
+          positionY: item.positionY,
+          scale: item.scale,
+          opacity: item.opacity,
+          width: item.width,
+          height: item.height,
+          effectiveWidth: item.effectiveWidth,
+          effectiveHeight: item.effectiveHeight,
+          maintainAspectRatio: item.maintainAspectRatio,
+        };
         await updateImageSegment(item.id, newStartTime, item.layer, newDuration, updatedSettings);
       } else if (item.type === 'audio') {
-        await updateAudioSegment(item.id, newStartTime, item.layer, newDuration);
-      } else {
-        await updateSegmentPosition(item.id, newStartTime, item.layer, newDuration);
+        await updateAudioSegment(
+          item.id,
+          newStartTime,
+          item.layer,
+          newDuration,
+          item.startTimeWithinAudio,
+          item.endTimeWithinAudio
+        );
       }
     }
+
     setResizingItem(null);
     setResizeEdge(null);
   };
