@@ -1,4 +1,5 @@
 import React from 'react';
+import '../CSS/Timeline.css';
 
 const TimelineLayer = ({
   layer,
@@ -10,6 +11,7 @@ const TimelineLayer = ({
   handleVideoSelect,
   handleEditTextSegment,
   selectedSegmentId,
+  handleDeleteSegment, // NEW: Added prop for delete functionality
 }) => {
   const isAudioLayer = layer.some(item => item.type === 'audio');
 
@@ -93,6 +95,17 @@ const TimelineLayer = ({
                   handleResizeStart(e, item, layerIndex, 'right');
                 }}
               />
+              {/* NEW: Delete button added for selected segments */}
+              <button
+                className="delete-segment-btn"
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent triggering segment selection
+                  handleDeleteSegment(item); // Call the delete handler
+                }}
+                disabled={selectedSegmentId !== item.id} // Only active when this segment is selected
+              >
+                ✕
+              </button>
             </div>
           );
         })}

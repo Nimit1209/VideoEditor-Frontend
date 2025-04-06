@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom'; // Added useLocation
 import '../CSS/Dashboard.css';
 
 const API_BASE_URL = 'http://localhost:8080';
@@ -8,16 +8,16 @@ const API_BASE_URL = 'http://localhost:8080';
 const Dashboard = () => {
   const [projects, setProjects] = useState([]);
   const [newProjectName, setNewProjectName] = useState('');
-  const [width, setWidth] = useState(1920); // Default width
-  const [height, setHeight] = useState(1080); // Default height
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false); // Dropdown state
+  const [width, setWidth] = useState(1920);
+  const [height, setHeight] = useState(1080);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation(); // Added to access navigation state
 
   useEffect(() => {
     fetchProjects();
   }, []);
 
-  // Function to generate video thumbnail
   const generateVideoThumbnail = async (videoPath) => {
     const fullVideoPath = `${API_BASE_URL}/videos/${encodeURIComponent(videoPath.split('/').pop())}`;
     return new Promise((resolve) => {
@@ -65,7 +65,6 @@ const Dashboard = () => {
     });
   };
 
-  // Function to generate image thumbnail
   const generateImageThumbnail = async (projectId, imagePath) => {
     const filename = imagePath.split('/').pop();
     const fullImagePath = `${API_BASE_URL}/projects/${projectId}/images/${encodeURIComponent(filename)}`;
@@ -185,9 +184,9 @@ const Dashboard = () => {
       );
       setProjects([...projects, { ...response.data, thumbnail: null }]);
       setNewProjectName('');
-      setWidth(1920); // Reset to default
-      setHeight(1080); // Reset to default
-      setIsDropdownOpen(false); // Close dropdown
+      setWidth(1920);
+      setHeight(1080);
+      setIsDropdownOpen(false);
       navigate(`/projecteditor/${response.data.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
@@ -287,6 +286,10 @@ const Dashboard = () => {
 
       <section className="projects-section">
         <h2>My Projects</h2>
+        {/* Display error message if redirected with state */}
+        {location.state?.error && (
+          <p className="error-message">{location.state.error}</p>
+        )}
         <div className="project-grid">
           {projects.length === 0 ? (
             <p className="no-projects">No projects yet. Create one to get started!</p>

@@ -7,10 +7,11 @@ const VideoPreview = ({
   layers,
   currentTime,
   isPlaying,
-  canvasDimensions = { width: 1280, height: 720 },
+  canvasDimensions = { width: 1080, height: 1920 },
   onTimeUpdate,
   totalDuration = 0,
   setIsPlaying,
+  containerHeight,
 }) => {
   const [loadingVideos, setLoadingVideos] = useState(new Set());
   const [preloadComplete, setPreloadComplete] = useState(false);
@@ -28,7 +29,6 @@ const VideoPreview = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   };
 
-  // Create a stable identifier for video content to prevent unnecessary preloading
   const videoLayerIds = useMemo(() => {
     return layers
       .flat()
@@ -37,7 +37,6 @@ const VideoPreview = ({
       .join('|');
   }, [layers]);
 
-  // Preload videos only when videoLayerIds changes
   useEffect(() => {
     const preloadVideos = () => {
       const allVideoItems = layers.flat().filter(item => item.type === 'video');
@@ -87,9 +86,8 @@ const VideoPreview = ({
       });
       preloadRefs.current = {};
     };
-  }, [videoLayerIds]); // Depend only on videoLayerIds
+  }, [videoLayerIds]);
 
-  // Video playback logic
   useEffect(() => {
     const visibleElements = getVisibleElements();
 
@@ -156,7 +154,6 @@ const VideoPreview = ({
     };
   }, [currentTime, isPlaying, layers, preloadComplete]);
 
-  // Animation loop
   useEffect(() => {
     const updatePlayhead = (timestamp) => {
       if (isPlaying) {
@@ -184,29 +181,39 @@ const VideoPreview = ({
     };
   }, [isPlaying, currentTime, onTimeUpdate, totalDuration, setIsPlaying]);
 
-  // Size calculation for the preview container
   useEffect(() => {
     if (previewContainerRef.current) {
       const calculateSize = () => {
         const containerWidth = previewContainerRef.current.clientWidth;
-        const containerHeight = previewContainerRef.current.clientHeight;
+        const containerHeightPx = containerHeight && containerHeight !== 'auto'
+          ? parseFloat(containerHeight)
+          : previewContainerRef.current.clientHeight;
         const canvasAspectRatio = canvasDimensions.width / canvasDimensions.height;
+
+        // Calculate base scale based on container dimensions
+        let newScale = Math.min(
+          containerWidth / canvasDimensions.width,
+          containerHeightPx / canvasDimensions.height
+        );
+
+        // Define scale limits synchronized with ProjectEditor's minPreviewHeight
+        const minPreviewHeight = 100; // Match ProjectEditor's minimum
+        const minScale = minPreviewHeight / canvasDimensions.height; // e.g., 100 / 1920 ≈ 0.052
+        const maxScale = 1.0; // Content won't exceed original size
+
+        // Clamp the scale
+        newScale = Math.max(minScale, Math.min(maxScale, newScale));
+        setScale(newScale);
+
+        const canvasWrapper = document.querySelector('.canvas-wrapper');
+        if (canvasWrapper) {
+          canvasWrapper.style.transform = `scale(${newScale})`;
+          canvasWrapper.style.width = `${canvasDimensions.width}px`;
+          canvasWrapper.style.height = `${canvasDimensions.height}px`;
+        }
 
         const previewArea = document.querySelector('.preview-area');
         if (previewArea) {
-          const newScale = Math.min(
-            containerWidth / canvasDimensions.width,
-            containerHeight / canvasDimensions.height
-          );
-          setScale(newScale);
-
-          const canvasWrapper = document.querySelector('.canvas-wrapper');
-          if (canvasWrapper) {
-            canvasWrapper.style.transform = `scale(${newScale})`;
-            canvasWrapper.style.width = `${canvasDimensions.width}px`;
-            canvasWrapper.style.height = `${canvasDimensions.height}px`;
-          }
-
           previewArea.style.width = `${canvasDimensions.width * newScale}px`;
           previewArea.style.height = `${canvasDimensions.height * newScale}px`;
         }
@@ -216,7 +223,7 @@ const VideoPreview = ({
       window.addEventListener('resize', calculateSize);
       return () => window.removeEventListener('resize', calculateSize);
     }
-  }, [canvasDimensions]);
+  }, [canvasDimensions, containerHeight]);
 
   const getVisibleElements = () => {
     const visibleElements = [];
@@ -253,27 +260,31 @@ const VideoPreview = ({
           }}
         >
           {visibleElements.map(element => {
+            // Calculate position in pixels relative to center
+            const centerX = canvasDimensions.width / 2;
+            const centerY = canvasDimensions.height / 2;
+
             if (element.type === 'video') {
-              const videoWidth = 1080; // Adjust based on actual video metadata if available
-              const videoHeight = 1920;
+              const videoWidth = element.width || 1080;
+              const videoHeight = element.height || 1920;
               const videoAspectRatio = videoWidth / videoHeight;
 
-              let displayWidth = videoWidth;
-              let displayHeight = videoHeight;
+              let displayWidth = canvasDimensions.width;
+              let displayHeight = canvasDimensions.height;
 
-              if (canvasDimensions.height < videoHeight) {
-                displayHeight = videoHeight;
-                displayWidth = displayHeight * videoAspectRatio;
-              }
-
-              if (canvasDimensions.width < videoWidth) {
-                displayWidth = videoWidth;
-                displayHeight = displayWidth / videoAspectRatio;
+              if (canvasDimensions.height / canvasDimensions.width > videoAspectRatio) {
+                displayHeight = canvasDimensions.width / videoAspectRatio;
+              } else {
+                displayWidth = canvasDimensions.height * videoAspectRatio;
               }
 
               const scaleFactor = element.scale || 1;
               displayWidth *= scaleFactor;
               displayHeight *= scaleFactor;
+
+              // Position in pixels from center
+              const posX = centerX + (element.positionX || 0) - (displayWidth / 2);
+              const posY = centerY + (element.positionY || 0) - (displayHeight / 2);
 
               return (
                 <video
@@ -285,9 +296,8 @@ const VideoPreview = ({
                     position: 'absolute',
                     width: `${displayWidth}px`,
                     height: `${displayHeight}px`,
-                    top: `${element.positionY || 50}%`,
-                    left: `${element.positionX || 50}%`,
-                    transform: 'translate(-50%, -50%)',
+                    left: `${posX}px`,
+                    top: `${posY}px`,
                     zIndex: element.layerIndex,
                   }}
                   onError={(e) => console.error(`Error loading video ${element.filePath}:`, e)}
@@ -296,6 +306,16 @@ const VideoPreview = ({
                 />
               );
             } else if (element.type === 'image') {
+              const imgWidth = element.width || canvasDimensions.width;
+              const imgHeight = element.height || canvasDimensions.height;
+              const scaleFactor = element.scale || 1;
+              const displayWidth = imgWidth * scaleFactor;
+              const displayHeight = imgHeight * scaleFactor;
+
+              // Position in pixels from center
+              const posX = centerX + (element.positionX || 0) - (displayWidth / 2);
+              const posY = centerY + (element.positionY || 0) - (displayHeight / 2);
+
               return (
                 <img
                   key={element.id}
@@ -303,28 +323,35 @@ const VideoPreview = ({
                   alt="Preview"
                   style={{
                     position: 'absolute',
-                    width: element.width ? `${element.width}px` : 'auto',
-                    height: element.height ? `${element.height}px` : 'auto',
-                    top: `${element.positionY || 50}%`,
-                    left: `${element.positionX || 50}%`,
-                    transform: `translate(-50%, -50%) scale(${element.scale || 1})`,
+                    width: `${displayWidth}px`,
+                    height: `${displayHeight}px`,
+                    left: `${posX}px`,
+                    top: `${posY}px`,
                     opacity: element.opacity || 1,
                     zIndex: element.layerIndex,
                   }}
                 />
               );
             } else if (element.type === 'text') {
+              const fontSize = (element.fontSize || 24) * scale;
+              // Approximate text dimensions (this is an estimation)
+              const textWidth = element.text.length * fontSize * 0.6; // Rough estimate
+              const textHeight = fontSize * 1.2;
+
+              // Position in pixels from center
+              const posX = centerX + (element.positionX || 0) - (textWidth / 2);
+              const posY = centerY + (element.positionY || 0) - (textHeight / 2);
+
               return (
                 <div
                   key={element.id}
                   className="preview-text"
                   style={{
                     position: 'absolute',
-                    left: `${element.positionX}%`,
-                    top: `${element.positionY}%`,
-                    transform: 'translate(-50%, -50%)',
+                    left: `${posX}px`,
+                    top: `${posY}px`,
                     fontFamily: element.fontFamily || 'Arial',
-                    fontSize: `${element.fontSize * scale}px`,
+                    fontSize: `${fontSize}px`,
                     color: element.fontColor || '#FFFFFF',
                     backgroundColor: element.backgroundColor || 'transparent',
                     padding: `${5 * scale}px`,
@@ -343,7 +370,6 @@ const VideoPreview = ({
 
         {visibleElements.length === 0 && (
           <div className="preview-empty-state">
-            No media at current playhead position
           </div>
         )}
 
