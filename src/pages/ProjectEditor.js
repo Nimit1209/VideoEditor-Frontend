@@ -41,20 +41,48 @@ const ProjectEditor = () => {
     duration: 5,
   });
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
-  const [tempFilterSettings, setTempFilterSettings] = useState({});
+  const [filterParams, setFilterParams] = useState({});
+  const [appliedFilters, setAppliedFilters] = useState([]);
+  const [timeScale, setTimeScale] = useState(20);
+  const [keyframes, setKeyframes] = useState({});
+  const [currentTimeInSegment, setCurrentTimeInSegment] = useState(0);
+
+  let timelineSetPlayhead = null;
+
+  const MIN_TIME_SCALE = 0.1;
+  const MAX_TIME_SCALE = 250;
 
   const navigate = useNavigate();
   const { projectId } = useParams();
   const updateTimeoutRef = useRef(null);
 
-  const toggleTransformPanel = () => setIsTransformOpen((prev) => !prev);
+  useEffect(() => {
+    if (selectedSegment) {
+      const relativeTime = currentTime - selectedSegment.startTime;
+      setCurrentTimeInSegment(Math.max(0, Math.min(selectedSegment.duration, relativeTime)));
+    }
+  }, [currentTime, selectedSegment]);
+
+  const areTimesEqual = (time1, time2, epsilon = 0.0001) => Math.abs(time1 - time2) < epsilon;
+
+  const toggleTransformPanel = () => {
+    setIsTransformOpen((prev) => !prev);
+    setIsFiltersOpen(false);
+    setIsTextToolOpen(false);
+  };
   const toggleMediaPanel = () => setIsMediaPanelOpen((prev) => !prev);
   const toggleToolsPanel = () => setIsToolsPanelOpen((prev) => !prev);
-  const toggleFiltersPanel = () => setIsFiltersOpen((prev) => !prev);
+
+  const toggleFiltersPanel = () => {
+    setIsFiltersOpen((prev) => !prev);
+    setIsTransformOpen(false);
+    setIsTextToolOpen(false);
+  };
 
   const toggleTextTool = () => {
     if (selectedSegment && selectedSegment.type === 'text') {
       setIsTextToolOpen((prev) => !prev);
+      setIsFiltersOpen(false);
     } else {
       setIsTextToolOpen(false);
     }
@@ -124,6 +152,7 @@ const ProjectEditor = () => {
           timelineStartTime: updatedTextSegment.timelineStartTime,
           timelineEndTime: updatedTextSegment.timelineEndTime,
           layer: updatedTextSegment.layer,
+          keyframes: keyframes,
         },
         { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
       );
@@ -202,25 +231,17 @@ const ProjectEditor = () => {
       return;
     }
     const initializeProject = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.error('No token found, redirecting to login');
-        navigate('/');
-        return;
-      }
-
       try {
-        await Promise.all([fetchVideos(), fetchAudios(), fetchPhotos()]);
-        console.log(`Initializing session for project ${projectId}`);
+        await fetchVideos();
+        await fetchAudios();
+        await fetchPhotos();
+        const token = localStorage.getItem('token');
         const sessionResponse = await axios.post(
           `${API_BASE_URL}/projects/${projectId}/session`,
           {},
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setSessionId(sessionResponse.data);
-        console.log('Session ID set:', sessionResponse.data);
-
-        console.log(`Fetching project details for ${projectId}`);
         const projectResponse = await axios.get(
           `${API_BASE_URL}/projects/${projectId}`,
           { headers: { Authorization: `Bearer ${token}` } }
@@ -231,15 +252,7 @@ const ProjectEditor = () => {
         }
       } catch (error) {
         console.error('Error initializing project:', error);
-        if (error.response?.status === 403) {
-          console.error('Access denied to project. Redirecting to dashboard with error.');
-          navigate('/dashboard', { state: { error: 'You do not have permission to access this project.' } });
-        } else if (error.response?.status === 401) {
-          console.error('Unauthorized. Redirecting to login.');
-          navigate('/');
-        } else {
-          navigate('/dashboard', { state: { error: 'Failed to load project. Please try again.' } });
-        }
+        navigate('/dashboard');
       }
     };
     initializeProject();
@@ -275,13 +288,8 @@ const ProjectEditor = () => {
       });
       const project = response.data;
       if (project.audioJson) {
-        let audioFiles;
-        try {
-          audioFiles = typeof project.audioJson === 'string' ? JSON.parse(project.audioJson) : project.audioJson;
-        } catch (e) {
-          console.error('Error parsing audio_json:', e);
-          audioFiles = [];
-        }
+        let audioFiles =
+          typeof project.audioJson === 'string' ? JSON.parse(project.audioJson) : project.audioJson;
         if (Array.isArray(audioFiles)) {
           const updatedAudios = audioFiles.map((audio) => ({
             id: audio.audioPath || `audio-${audio.audioFileName}-${Date.now()}`,
@@ -310,13 +318,8 @@ const ProjectEditor = () => {
       });
       const project = response.data;
       if (project.imagesJson) {
-        let imageFiles;
-        try {
-          imageFiles = typeof project.imagesJson === 'string' ? JSON.parse(project.imagesJson) : project.imagesJson;
-        } catch (e) {
-          console.error('Error parsing imagesJson:', e);
-          imageFiles = [];
-        }
+        let imageFiles =
+          typeof project.imagesJson === 'string' ? JSON.parse(project.imagesJson) : project.imagesJson;
         if (Array.isArray(imageFiles)) {
           const updatedPhotos = await Promise.all(
             imageFiles.map(async (image) => {
@@ -361,7 +364,6 @@ const ProjectEditor = () => {
             })
           );
           setPhotos(updatedPhotos);
-          console.log('Fetched photos:', updatedPhotos);
         } else {
           setPhotos([]);
         }
@@ -384,13 +386,8 @@ const ProjectEditor = () => {
         });
         const project = response.data;
         if (project && project.timelineState) {
-          let timelineState;
-          try {
-            timelineState = typeof project.timelineState === 'string' ? JSON.parse(project.timelineState) : project.timelineState;
-          } catch (e) {
-            console.error('Failed to parse timeline state:', e);
-            timelineState = { segments: [], textSegments: [], audioSegments: [] };
-          }
+          let timelineState =
+            typeof project.timelineState === 'string' ? JSON.parse(project.timelineState) : project.timelineState;
           const newVideoLayers = [[], [], []];
           const newAudioLayers = [[], [], []];
 
@@ -405,7 +402,9 @@ const ProjectEditor = () => {
                 const video = videos.find((v) => {
                   const vPath = v.filePath || v.filename;
                   const normalizedVPath = vPath.startsWith('videos/') ? vPath.substring(7) : vPath;
-                  const normalizedVideoPath = segment.sourceVideoPath.startsWith('videos/') ? segment.sourceVideoPath.substring(7) : segment.sourceVideoPath;
+                  const normalizedVideoPath = segment.sourceVideoPath.startsWith('videos/')
+                    ? segment.sourceVideoPath.substring(7)
+                    : segment.sourceVideoPath;
                   return normalizedVPath === normalizedVideoPath;
                 });
                 if (video) {
@@ -419,24 +418,24 @@ const ProjectEditor = () => {
                     positionX: segment.positionX || 0,
                     positionY: segment.positionY || 0,
                     scale: segment.scale || 1,
-                    filters: segment.filters || [],
+                    filters: segment.filters || [], // Added from old code
                   });
                 }
-              } else if (segment.imageFileName) {
-                const photo = photos.find((p) => p.fileName === segment.imageFileName);
+              } else if (segment.imagePath) {
+                const photo = photos.find((p) => p.fileName === segment.imagePath.split('/').pop());
                 if (photo) {
                   newVideoLayers[layerIndex].push({
                     id: segment.id,
                     type: 'image',
                     startTime: segment.timelineStartTime || 0,
                     duration: (segment.timelineEndTime - segment.timelineStartTime) || 5,
-                    fileName: segment.imageFileName,
+                    fileName: segment.imagePath.split('/').pop(),
                     filePath: photo.filePath,
                     layer: layerIndex,
                     positionX: segment.positionX || 0,
                     positionY: segment.positionY || 0,
                     scale: segment.scale || 1,
-                    filters: segment.filters || [],
+                    filters: segment.filters || [], // Added from old code
                   });
                 }
               }
@@ -461,6 +460,8 @@ const ProjectEditor = () => {
                 fontSize: textSegment.fontSize || 24,
                 fontColor: textSegment.fontColor || '#FFFFFF',
                 backgroundColor: textSegment.backgroundColor || 'transparent',
+                positionX: textSegment.positionX || 0,
+                positionY: textSegment.positionY || 0,
               });
             }
           }
@@ -475,12 +476,13 @@ const ProjectEditor = () => {
               newAudioLayers[layerIndex].push({
                 id: audioSegment.id,
                 type: 'audio',
-                fileName: audioSegment.audioFileName || audioSegment.audioPath.split('/').pop(),
+                fileName: audioSegment.audioPath.split('/').pop(),
                 startTime: audioSegment.timelineStartTime || 0,
                 duration: (audioSegment.timelineEndTime - audioSegment.timelineStartTime) || 0,
                 layer: backendLayer,
-                displayName: audioSegment.audioFileName ? audioSegment.audioFileName.split('/').pop() : audioSegment.audioPath.split('/').pop(),
+                displayName: audioSegment.audioPath.split('/').pop(),
                 waveformImage: '/images/audio.jpeg',
+                volume: audioSegment.volume || 1.0,
               });
             }
           }
@@ -647,17 +649,12 @@ const ProjectEditor = () => {
         params: { sessionId },
         headers: { Authorization: `Bearer ${token}` },
       });
-      let timelineState;
-      if (response.data && response.data.timelineState) {
-        try {
-          timelineState = typeof response.data.timelineState === 'string' ? JSON.parse(response.data.timelineState) : response.data.timelineState;
-        } catch (e) {
-          console.error('Failed to parse timeline state:', e);
-          timelineState = { segments: [] };
-        }
-      } else {
-        timelineState = { segments: [] };
-      }
+      let timelineState =
+        response.data.timelineState
+          ? typeof response.data.timelineState === 'string'
+            ? JSON.parse(response.data.timelineState)
+            : response.data.timelineState
+          : { segments: [] };
       let endTime = 0;
       if (timelineState.segments && timelineState.segments.length > 0) {
         const layer0Segments = timelineState.segments.filter((seg) => seg.layer === 0);
@@ -701,7 +698,7 @@ const ProjectEditor = () => {
           positionY: segment.positionY || 0,
           scale: segment.scale || 1,
           thumbnail: video.thumbnail,
-          filters: segment.filters || [],
+          filters: segment.filters || [], // Added from old code
         };
         setVideoLayers((prevLayers) => {
           const newLayers = [...prevLayers];
@@ -717,9 +714,14 @@ const ProjectEditor = () => {
     }
   };
 
-  const handleTimeUpdate = (newTime) => setCurrentTime(newTime);
+  const handleTimeUpdate = (newTime, updatePlayhead = true) => {
+    setCurrentTime(newTime);
+    if (updatePlayhead && timelineSetPlayhead) {
+      timelineSetPlayhead(newTime, false);
+    }
+  };
 
-  // CHANGE 1: Moved handleDeleteSegment above useEffect hooks to prevent "Cannot access before initialization" error
+  // Added Delete Segment Functionality from old code
   const handleDeleteSegment = async () => {
     if (!selectedSegment || !sessionId || !projectId) return;
 
@@ -787,26 +789,19 @@ const ProjectEditor = () => {
     }
   };
 
-  // CHANGE 2: Updated useEffect to reference handleDeleteSegment after its definition
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === ' ' || e.code === 'Space') {
-        e.preventDefault();
-        setIsPlaying((prev) => !prev);
-      }
-      // Backspace key to delete selected segment
-      if (e.key === 'Backspace' && selectedSegment && !isPlaying) {
-        e.preventDefault();
-        handleDeleteSegment();
-      }
       if (!isPlaying) {
-        if (e.key === 'ArrowLeft') setCurrentTime((time) => Math.max(0, time - 1 / 30));
-        else if (e.key === 'ArrowRight') setCurrentTime((time) => Math.min(totalDuration, time + 1 / 30));
+        if (e.key === 'ArrowLeft') {
+          handleTimeUpdate(Math.max(0, currentTime - 1 / 30), true);
+        } else if (e.key === 'ArrowRight') {
+          handleTimeUpdate(Math.min(totalDuration, currentTime + 1 / 30), true);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, totalDuration, selectedSegment, handleDeleteSegment]);
+  }, [isPlaying, totalDuration, currentTime, selectedSegment]); // Added selectedSegment dependency
 
   useEffect(() => {
     if (isPlaying && currentTime >= totalDuration) {
@@ -826,17 +821,21 @@ const ProjectEditor = () => {
     const wrapperHeight = contentWrapper.clientHeight;
     const controlsPanelHeight = 60;
     const resizeHandleHeight = 6;
+    const zoomSliderHeight = 40;
+    const previewMarginTotal = 40;
     const mouseY = e.clientY;
     const wrapperTop = contentWrapper.getBoundingClientRect().top;
     const distanceFromTop = mouseY - wrapperTop;
 
-    const previewHeightPx = distanceFromTop - resizeHandleHeight;
+    const availableHeight = wrapperHeight - controlsPanelHeight - resizeHandleHeight - zoomSliderHeight - previewMarginTotal;
+
+    const previewHeightPx = distanceFromTop - resizeHandleHeight - 20;
     const minPreviewHeight = 100;
-    const maxPreviewHeight = wrapperHeight - controlsPanelHeight - resizeHandleHeight - 150;
+    const maxPreviewHeight = availableHeight - 150;
     const clampedPreviewHeight = Math.max(minPreviewHeight, Math.min(maxPreviewHeight, previewHeightPx));
 
-    const remainingHeight = wrapperHeight - clampedPreviewHeight - controlsPanelHeight - resizeHandleHeight;
-    const timelineHeightPercent = (remainingHeight / (wrapperHeight - controlsPanelHeight)) * 100;
+    const remainingHeight = availableHeight - clampedPreviewHeight;
+    const timelineHeightPercent = (remainingHeight / availableHeight) * 100;
     const minTimelineHeight = 10;
     const maxTimelineHeight = 50;
     const clampedTimelineHeight = Math.max(minTimelineHeight, Math.min(maxTimelineHeight, timelineHeightPercent));
@@ -858,24 +857,200 @@ const ProjectEditor = () => {
 
   const toggleSection = (section) => setExpandedSection(expandedSection === section ? null : section);
 
-  const handleSegmentSelect = (segment) => {
+  const handleSegmentSelect = async (segment) => {
     setSelectedSegment(segment);
     if (segment) {
-      setTempSegmentValues({
-        positionX: segment.positionX || 0,
-        positionY: segment.positionY || 0,
-        scale: segment.scale || 1,
+      let initialValues = {};
+      switch (segment.type) {
+        case 'video':
+          initialValues = {
+            positionX: segment.positionX || 0,
+            positionY: segment.positionY || 0,
+            scale: segment.scale || 1,
+          };
+          break;
+        case 'image':
+          initialValues = {
+            positionX: segment.positionX || 0,
+            positionY: segment.positionY || 0,
+            scale: segment.scale || 1,
+          };
+          break;
+        case 'text':
+          initialValues = {
+            positionX: segment.positionX || 0,
+            positionY: segment.positionY || 0,
+          };
+          break;
+        case 'audio':
+          initialValues = {
+            volume: segment.volume || 1.0,
+          };
+          break;
+        default:
+          break;
+      }
+      await fetchKeyframes(segment.id, segment.type);
+      const relativeTime = currentTime - segment.startTime;
+      setCurrentTimeInSegment(Math.max(0, Math.min(segment.duration, relativeTime)));
+      Object.keys(keyframes).forEach((prop) => {
+        const propKeyframes = keyframes[prop] || [];
+        if (propKeyframes.length > 0) {
+          const value = getValueAtTime(propKeyframes, currentTimeInSegment);
+          initialValues[prop] = value;
+        }
       });
-      const filterMap = {};
-      (segment.filters || []).forEach((filter) => {
-        filterMap[filter.filterName] = filter.filterValue;
+      setTempSegmentValues(initialValues);
+      // Fetch filters when segment is selected (from old code)
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API_BASE_URL}/projects/${projectId}`, {
+        params: { sessionId },
+        headers: { Authorization: `Bearer ${token}` },
       });
-      setTempFilterSettings(filterMap);
+      const timelineState = typeof response.data.timelineState === 'string' ? JSON.parse(response.data.timelineState) : response.data.timelineState;
+      const segmentData = (segment.type === 'video' || segment.type === 'image' ? timelineState.segments : []).find(s => s.id === segment.id);
+      setAppliedFilters(segmentData?.filters || segment.filters || []);
     } else {
       setTempSegmentValues({});
-      setTempFilterSettings({});
+      setAppliedFilters([]);
+      setFilterParams({});
+      setKeyframes({});
+      setCurrentTimeInSegment(0);
     }
     handleTextSegmentSelect(segment);
+  };
+
+  const fetchKeyframes = async (segmentId, segmentType) => {
+    try {
+      const token = localStorage.getItem('token');
+      let response;
+      switch (segmentType) {
+        case 'video':
+          response = await axios.get(`${API_BASE_URL}/projects/${projectId}/get-segment`, {
+            params: { sessionId, segmentId },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          break;
+        case 'image':
+        case 'text':
+        case 'audio':
+          response = await axios.get(`${API_BASE_URL}/projects/${projectId}`, {
+            params: { sessionId },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const timelineState =
+            typeof response.data.timelineState === 'string'
+              ? JSON.parse(response.data.timelineState)
+              : response.data.timelineState;
+          const segments =
+            segmentType === 'image'
+              ? timelineState.imageSegments
+              : segmentType === 'text'
+              ? timelineState.textSegments
+              : timelineState.audioSegments;
+          const segment = segments.find((s) => s.id === segmentId);
+          response = { data: segment };
+          break;
+        default:
+          throw new Error('Invalid segment type');
+      }
+      const segmentData = response.data;
+      setKeyframes(segmentData?.keyframes || {});
+      return segmentData;
+    } catch (error) {
+      console.error(`Error fetching keyframes for ${segmentType}:`, error);
+      setKeyframes({});
+      return null;
+    }
+  };
+
+  const getValueAtTime = (keyframesArray, time) => {
+    if (!keyframesArray || keyframesArray.length === 0) return null;
+    const sorted = [...keyframesArray].sort((a, b) => a.time - b.time);
+    if (time <= sorted[0].time) return sorted[0].value;
+    if (time >= sorted[sorted.length - 1].time) return sorted[sorted.length - 1].value;
+
+    for (let i = 0; i < sorted.length - 1; i++) {
+      if (time >= sorted[i].time && time <= sorted[i + 1].time) {
+        const t = (time - sorted[i].time) / (sorted[i + 1].time - sorted[i].time);
+        return sorted[i].value + t * (sorted[i + 1].value - sorted[i].value);
+      }
+    }
+    return sorted[0].value;
+  };
+
+  const addKeyframe = async (property, value) => {
+    if (!selectedSegment) return;
+    const time = currentTimeInSegment;
+
+    const segmentData = await fetchKeyframes(selectedSegment.id, selectedSegment.type);
+    const currentKeyframes = segmentData?.keyframes || {};
+
+    const updatedPropertyKeyframes = (currentKeyframes[property] || []).filter(
+      (kf) => !areTimesEqual(kf.time, time)
+    );
+    updatedPropertyKeyframes.push({ time, value, interpolationType: 'linear' });
+    updatedPropertyKeyframes.sort((a, b) => a.time - b.time);
+
+    const updatedKeyframes = {
+      ...currentKeyframes,
+      [property]: updatedPropertyKeyframes,
+    };
+
+    setKeyframes(updatedKeyframes);
+    await saveSegmentChanges(updatedKeyframes);
+  };
+
+  const removeKeyframe = async (property, time) => {
+    if (!selectedSegment) return;
+    try {
+      const token = localStorage.getItem('token');
+      await axios.delete(`${API_BASE_URL}/projects/${projectId}/remove-keyframe`, {
+        params: {
+          sessionId,
+          segmentId: selectedSegment.id,
+          segmentType: selectedSegment.type,
+          property,
+          time,
+        },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const updatedKeyframes = {
+        ...keyframes,
+        [property]: (keyframes[property] || []).filter((kf) => !areTimesEqual(kf.time, time)),
+      };
+      setKeyframes(updatedKeyframes);
+      await fetchKeyframes(selectedSegment.id, selectedSegment.type);
+    } catch (error) {
+      console.error('Error removing keyframe:', error);
+    }
+  };
+
+  const toggleKeyframe = (property) => {
+    const currentKeyframes = keyframes[property] || [];
+    const keyframeAtTime = currentKeyframes.find((kf) => areTimesEqual(kf.time, currentTimeInSegment));
+    if (keyframeAtTime) {
+      removeKeyframe(property, currentTimeInSegment);
+    } else {
+      addKeyframe(property, tempSegmentValues[property]);
+    }
+  };
+
+  const navigateKeyframes = (property, direction) => {
+    if (!selectedSegment || !keyframes[property]) return;
+    const sortedKeyframes = keyframes[property].sort((a, b) => a.time - b.time);
+    const currentIndex = sortedKeyframes.findIndex((kf) => kf.time >= currentTimeInSegment);
+    let newIndex;
+    if (direction === 'prev') {
+      newIndex = currentIndex === -1 ? sortedKeyframes.length - 1 : Math.max(0, currentIndex - 1);
+    } else {
+      newIndex = currentIndex === -1 ? 0 : Math.min(sortedKeyframes.length - 1, currentIndex + 1);
+    }
+    if (sortedKeyframes[newIndex]) {
+      const newTime = sortedKeyframes[newIndex].time;
+      setCurrentTimeInSegment(newTime);
+      handleTimeUpdate(selectedSegment.startTime + newTime);
+    }
   };
 
   const updateSegmentProperty = (property, value) => {
@@ -890,66 +1065,98 @@ const ProjectEditor = () => {
     if (selectedSegment.layer < 0) setAudioLayers(newLayers);
     else setVideoLayers(newLayers);
     if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
-    updateTimeoutRef.current = setTimeout(() => saveSegmentChanges(), 500);
+    updateTimeoutRef.current = setTimeout(() => saveSegmentChanges(keyframes), 500);
   };
 
-  const saveSegmentChanges = async () => {
+  const saveSegmentChanges = async (updatedKeyframes = keyframes) => {
     if (!selectedSegment || !sessionId || !projectId) return;
     try {
       const token = localStorage.getItem('token');
-      if (selectedSegment.type === 'audio') {
-        await axios.put(
-          `${API_BASE_URL}/projects/${projectId}/update-audio`,
-          { audioSegmentId: selectedSegment.id, positionX: tempSegmentValues.positionX, positionY: tempSegmentValues.positionY },
-          { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
-        );
-      } else if (selectedSegment.type === 'video') {
-        const requestBody = {
-          segmentId: selectedSegment.id,
-          positionX: tempSegmentValues.positionX,
-          positionY: tempSegmentValues.positionY,
-          scale: tempSegmentValues.scale,
-        };
-        await axios.put(
-          `${API_BASE_URL}/projects/${projectId}/update-segment`,
-          requestBody,
-          { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
-        );
-      } else if (selectedSegment.type === 'image') {
-        const requestBody = {
-          segmentId: selectedSegment.id,
-          positionX: tempSegmentValues.positionX,
-          positionY: tempSegmentValues.positionY,
-          scale: tempSegmentValues.scale,
-        };
-        await axios.put(
-          `${API_BASE_URL}/projects/${projectId}/update-image`,
-          requestBody,
-          { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
-        );
-      } else if (selectedSegment.type === 'text') {
-        const updatedTextSettings = {
-          ...selectedSegment,
-          ...textSettings,
-        };
-        await axios.put(
-          `${API_BASE_URL}/projects/${projectId}/update-text`,
-          {
-            segmentId: selectedSegment.id,
-            text: updatedTextSettings.text,
-            fontFamily: updatedTextSettings.fontFamily,
-            fontSize: updatedTextSettings.fontSize,
-            fontColor: updatedTextSettings.fontColor,
-            backgroundColor: updatedTextSettings.backgroundColor,
-            timelineStartTime: updatedTextSettings.startTime,
-            timelineEndTime: updatedTextSettings.startTime + updatedTextSettings.duration,
-            layer: updatedTextSettings.layer,
-          },
-          { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
-        );
+      switch (selectedSegment.type) {
+        case 'video':
+          await axios.put(
+            `${API_BASE_URL}/projects/${projectId}/update-segment`,
+            {
+              segmentId: selectedSegment.id,
+              positionX:
+                updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionX,
+              positionY:
+                updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionY,
+              scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? undefined : tempSegmentValues.scale,
+              keyframes: updatedKeyframes,
+              filters: appliedFilters, // Added from old code
+            },
+            { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+          );
+          break;
+        case 'image':
+          await axios.put(
+            `${API_BASE_URL}/projects/${projectId}/update-image`,
+            {
+              segmentId: selectedSegment.id,
+              positionX:
+                updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionX,
+              positionY:
+                updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionY,
+              scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? undefined : tempSegmentValues.scale,
+              keyframes: updatedKeyframes,
+              filters: appliedFilters, // Added from old code
+            },
+            { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+          );
+          break;
+        case 'text':
+          await axios.put(
+            `${API_BASE_URL}/projects/${projectId}/update-text`,
+            {
+              segmentId: selectedSegment.id,
+              text: textSettings.text,
+              fontFamily: textSettings.fontFamily,
+              fontSize: textSettings.fontSize,
+              fontColor: textSettings.fontColor,
+              backgroundColor: textSettings.backgroundColor,
+              timelineStartTime: selectedSegment.startTime,
+              timelineEndTime: selectedSegment.startTime + textSettings.duration,
+              layer: selectedSegment.layer,
+              positionX:
+                updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionX,
+              positionY:
+                updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionY,
+              keyframes: updatedKeyframes,
+            },
+            { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+          );
+          break;
+        case 'audio':
+          await axios.put(
+            `${API_BASE_URL}/projects/${projectId}/update-audio`,
+            {
+              audioSegmentId: selectedSegment.id,
+              volume:
+                updatedKeyframes.volume && updatedKeyframes.volume.length > 0 ? undefined : tempSegmentValues.volume,
+              keyframes: updatedKeyframes,
+            },
+            { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+          );
+          break;
+        default:
+          break;
       }
+      await fetchKeyframes(selectedSegment.id, selectedSegment.type);
     } catch (error) {
-      console.error('Error saving segment changes:', error);
+      console.error(`Error saving ${selectedSegment.type} segment changes:`, error);
     }
   };
 
@@ -983,11 +1190,12 @@ const ProjectEditor = () => {
         params: { sessionId },
         headers: { Authorization: `Bearer ${token}` },
       });
-      let timelineState = response.data.timelineState
-        ? typeof response.data.timelineState === 'string'
-          ? JSON.parse(response.data.timelineState)
-          : response.data.timelineState
-        : { segments: [], textSegments: [] };
+      let timelineState =
+        response.data.timelineState
+          ? typeof response.data.timelineState === 'string'
+            ? JSON.parse(response.data.timelineState)
+            : response.data.timelineState
+          : { segments: [], textSegments: [] };
       let endTime = 0;
       const layer0Items = [
         ...(timelineState.segments || []).filter((seg) => seg.layer === 0),
@@ -1006,10 +1214,15 @@ const ProjectEditor = () => {
       );
       const updatedResponse = await axios.get(`${API_BASE_URL}/projects/${projectId}`, {
         params: { sessionId },
-        headers: { Authorization: `Bearer ${token}` } }
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const updatedTimelineState =
+        typeof updatedResponse.data.timelineState === 'string'
+          ? JSON.parse(updatedResponse.data.timelineState)
+          : updatedResponse.data.timelineState;
+      const newImageSegment = updatedTimelineState.imageSegments.find(
+        (seg) => seg.imagePath && seg.timelineStartTime === endTime && seg.layer === 0
       );
-      const updatedTimelineState = typeof updatedResponse.data.timelineState === 'string' ? JSON.parse(updatedResponse.data.timelineState) : updatedResponse.data.timelineState;
-      const newImageSegment = updatedTimelineState.segments.find((seg) => seg.imagePath && seg.timelineStartTime === endTime && seg.layer === 0);
       if (newImageSegment) {
         const filename = newImageSegment.imagePath.split('/').pop();
         const thumbnail = await new Promise((resolve) => {
@@ -1055,7 +1268,7 @@ const ProjectEditor = () => {
             positionX: newImageSegment.positionX || 50,
             positionY: newImageSegment.positionY || 50,
             scale: newImageSegment.scale || 1,
-            filters: newImageSegment.filters || [],
+            filters: newImageSegment.filters || [], // Added from old code
           });
           return newLayers;
         });
@@ -1065,13 +1278,14 @@ const ProjectEditor = () => {
     }
   };
 
+  // Added Filter Functionality from old code
   const handleApplyFilter = async () => {
-    if (!selectedSegment || !sessionId || !projectId || Object.keys(tempFilterSettings).length === 0) return;
+    if (!selectedSegment || !sessionId || !projectId || Object.keys(filterParams).length === 0) return;
     if (selectedSegment.type !== 'video' && selectedSegment.type !== 'image') return;
 
     try {
       const token = localStorage.getItem('token');
-      const filterRequests = Object.entries(tempFilterSettings).map(([filterName, filterValue]) =>
+      const filterRequests = Object.entries(filterParams).map(([filterName, filterValue]) =>
         axios.post(
           `${API_BASE_URL}/projects/${projectId}/apply-filter`,
           {
@@ -1098,12 +1312,9 @@ const ProjectEditor = () => {
           return newLayers;
         });
         setSelectedSegment((prev) => ({ ...prev, filters: updatedSegment.filters || [] }));
+        setAppliedFilters(updatedSegment.filters || []);
       }
-      setTempFilterSettings((prev) => {
-        const newSettings = { ...prev };
-        Object.keys(tempFilterSettings).forEach((key) => delete newSettings[key]);
-        return newSettings;
-      });
+      setFilterParams({}); // Clear temp filter settings after applying
     } catch (error) {
       console.error('Error applying filters:', error);
     }
@@ -1138,7 +1349,8 @@ const ProjectEditor = () => {
           return newLayers;
         });
         setSelectedSegment((prev) => ({ ...prev, filters: updatedSegment.filters || [] }));
-        setTempFilterSettings((prev) => {
+        setAppliedFilters(updatedSegment.filters || []);
+        setFilterParams((prev) => {
           const newSettings = { ...prev };
           delete newSettings[filterName];
           return newSettings;
@@ -1150,26 +1362,300 @@ const ProjectEditor = () => {
   };
 
   const updateFilterSetting = (filterName, filterValue) => {
-    setTempFilterSettings((prev) => ({
+    setFilterParams((prev) => ({
       ...prev,
       [filterName]: filterValue,
     }));
-    setVideoLayers((prevLayers) => {
-      const newLayers = [...prevLayers];
-      newLayers[selectedSegment.layer] = newLayers[selectedSegment.layer].map((item) =>
-        item.id === selectedSegment.id
-          ? {
-              ...item,
-              filters: item.filters
-                ? item.filters
-                    .filter((f) => f.filterName !== filterName)
-                    .concat([{ filterName, filterValue: filterValue.toString(), filterId: `${filterName}-${Date.now()}` }])
-                : [{ filterName, filterValue: filterValue.toString(), filterId: `${filterName}-${Date.now()}` }],
-            }
-          : item
-      );
-      return newLayers;
-    });
+  };
+
+  const renderFilterControls = () => {
+    return (
+      <div className="filters-panel" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+        <h3>Filters</h3>
+        {!selectedSegment || (selectedSegment.type !== 'video' && selectedSegment.type !== 'image') ? (
+          <p>Select a video or image segment to apply filters</p>
+        ) : (
+          <>
+            <div className="filter-group">
+              <h4>Color Adjustments</h4>
+              <div className="control-group">
+                <label>Brightness (-1 to 1)</label>
+                <div className="slider-container">
+                  <input
+                    type="range"
+                    min="-1"
+                    max="1"
+                    step="0.1"
+                    value={filterParams.brightness || 0}
+                    onChange={(e) => updateFilterSetting('brightness', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    value={filterParams.brightness || 0}
+                    onChange={(e) => updateFilterSetting('brightness', e.target.value)}
+                    step="0.1"
+                    min="-1"
+                    max="1"
+                    style={{ width: '60px', marginLeft: '10px' }}
+                  />
+                </div>
+              </div>
+              <div className="control-group">
+                <label>Contrast (0 to 2)</label>
+                <div className="slider-container">
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={filterParams.contrast || 1}
+                    onChange={(e) => updateFilterSetting('contrast', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    value={filterParams.contrast || 1}
+                    onChange={(e) => updateFilterSetting('contrast', e.target.value)}
+                    step="0.1"
+                    min="0"
+                    max="2"
+                    style={{ width: '60px', marginLeft: '10px' }}
+                  />
+                </div>
+              </div>
+              <div className="control-group">
+                <label>Saturation (0 to 2)</label>
+                <div className="slider-container">
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={filterParams.saturation || 1}
+                    onChange={(e) => updateFilterSetting('saturation', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    value={filterParams.saturation || 1}
+                    onChange={(e) => updateFilterSetting('saturation', e.target.value)}
+                    step="0.1"
+                    min="0"
+                    max="2"
+                    style={{ width: '60px', marginLeft: '10px' }}
+                  />
+                </div>
+              </div>
+              <div className="control-group">
+                <label>Hue (-180 to 180)</label>
+                <div className="slider-container">
+                  <input
+                    type="range"
+                    min="-180"
+                    max="180"
+                    step="1"
+                    value={filterParams.hue || 0}
+                    onChange={(e) => updateFilterSetting('hue', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    value={filterParams.hue || 0}
+                    onChange={(e) => updateFilterSetting('hue', e.target.value)}
+                    step="1"
+                    min="-180"
+                    max="180"
+                    style={{ width: '60px', marginLeft: '10px' }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="filter-group">
+              <h4>Blur and Sharpen</h4>
+              <div className="control-group">
+                <label>Blur (0-10)</label>
+                <div className="slider-container">
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="1"
+                    value={filterParams.blur || 0}
+                    onChange={(e) => updateFilterSetting('blur', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    value={filterParams.blur || 0}
+                    onChange={(e) => updateFilterSetting('blur', e.target.value)}
+                    step="1"
+                    min="0"
+                    max="10"
+                    style={{ width: '60px', marginLeft: '10px' }}
+                  />
+                </div>
+              </div>
+              <div className="control-group">
+                <label>Sharpen (-2 to 2)</label>
+                <div className="slider-container">
+                  <input
+                    type="range"
+                    min="-2"
+                    max="2"
+                    step="0.1"
+                    value={filterParams.sharpen || 0}
+                    onChange={(e) => updateFilterSetting('sharpen', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    value={filterParams.sharpen || 0}
+                    onChange={(e) => updateFilterSetting('sharpen', e.target.value)}
+                    step="0.1"
+                    min="-2"
+                    max="2"
+                    style={{ width: '60px', marginLeft: '10px' }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="filter-actions">
+              <button onClick={handleApplyFilter} disabled={Object.keys(filterParams).length === 0}>
+                Apply Filters
+              </button>
+            </div>
+            {appliedFilters && appliedFilters.length > 0 && (
+              <div className="applied-filters">
+                <h4>Applied Filters</h4>
+                {appliedFilters.map((filter) => (
+                  <div key={filter.filterId} className="applied-filter-item">
+                    {filter.filterName}: {filter.filterValue}
+                    <button
+                      onClick={() => handleRemoveFilter(filter.filterName)}
+                      className="remove-filter-button"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderKeyframeControls = () => {
+    if (!selectedSegment) return null;
+
+    let properties = [];
+    switch (selectedSegment.type) {
+      case 'video':
+        properties = [
+          { name: 'positionX', label: 'Position X', unit: 'px', type: 'number', step: 1 },
+          { name: 'positionY', label: 'Position Y', unit: 'px', type: 'number', step: 1 },
+          { name: 'scale', label: 'Scale', unit: 'x', type: 'range', min: 0.1, max: 5, step: 0.1 },
+        ];
+        break;
+      case 'image':
+        properties = [
+          { name: 'positionX', label: 'Position X', unit: 'px', type: 'number', step: 1 },
+          { name: 'positionY', label: 'Position Y', unit: 'px', type: 'number', step: 1 },
+          { name: 'scale', label: 'Scale', unit: 'x', type: 'range', min: 0.1, max: 5, step: 0.1 },
+        ];
+        break;
+      case 'text':
+        properties = [
+          { name: 'positionX', label: 'Position X', unit: 'px', type: 'number', step: 1 },
+          { name: 'positionY', label: 'Position Y', unit: 'px', type: 'number', step: 1 },
+        ];
+        break;
+      case 'audio':
+        properties = [
+          { name: 'volume', label: 'Volume', unit: '', type: 'range', min: 0, max: 1, step: 0.01 },
+        ];
+        break;
+      default:
+        return null;
+    }
+
+    return (
+      <div className="keyframe-section">
+        {properties.map((prop) => {
+          const hasKeyframes = keyframes[prop.name] && keyframes[prop.name].length > 0;
+          const currentValue = hasKeyframes
+            ? getValueAtTime(keyframes[prop.name], currentTimeInSegment)
+            : tempSegmentValues[prop.name];
+          const miniTimelineWidth = 200;
+          const duration = selectedSegment.duration;
+
+          return (
+            <div key={prop.name} className="property-row">
+              <div className="property-header">
+                <button
+                  className={`keyframe-toggle ${hasKeyframes ? 'active' : ''}`}
+                  onClick={() => toggleKeyframe(prop.name)}
+                  title="Toggle Keyframe"
+                >
+                  ⏱
+                </button>
+                <label>{prop.label}</label>
+              </div>
+              <div className="property-controls">
+                {prop.type === 'number' ? (
+                  <input
+                    type="number"
+                    value={currentValue || 0}
+                    onChange={(e) => updateSegmentProperty(prop.name, parseInt(e.target.value) || 0)}
+                    step={prop.step}
+                    style={{ width: '60px' }}
+                  />
+                ) : (
+                  <div className="slider-container">
+                    <input
+                      type="range"
+                      min={prop.min}
+                      max={prop.max}
+                      step={prop.step}
+                      value={currentValue !== undefined ? currentValue : prop.name === 'volume' ? 1 : 1}
+                      onChange={(e) => updateSegmentProperty(prop.name, parseFloat(e.target.value))}
+                    />
+                    <span>
+                      {(currentValue !== undefined ? currentValue : prop.name === 'volume' ? 1 : 1).toFixed(
+                        prop.step < 1 ? 2 : 1
+                      )}
+                      {prop.unit}
+                    </span>
+                  </div>
+                )}
+                <div className="keyframe-nav">
+                  <button onClick={() => navigateKeyframes(prop.name, 'prev')} disabled={!hasKeyframes}>
+                    ◄
+                  </button>
+                  <button onClick={() => navigateKeyframes(prop.name, 'next')} disabled={!hasKeyframes}>
+                    ►
+                  </button>
+                </div>
+              </div>
+              <div className="mini-timeline" style={{ width: `${miniTimelineWidth}px`, position: 'relative', height: '20px' }}>
+                <div
+                  className="mini-playhead"
+                  style={{ left: `${(currentTimeInSegment / duration) * miniTimelineWidth}px` }}
+                />
+                {(keyframes[prop.name] || []).map((kf, index) => (
+                  <div
+                    key={index}
+                    className="keyframe-marker"
+                    style={{ left: `${(kf.time / duration) * miniTimelineWidth}px` }}
+                    onClick={() => {
+                      setCurrentTimeInSegment(kf.time);
+                      handleTimeUpdate(selectedSegment.startTime + kf.time);
+                      setTempSegmentValues((prev) => ({ ...prev, [prop.name]: kf.value }));
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -1189,13 +1675,7 @@ const ProjectEditor = () => {
               </button>
               {expandedSection === 'videos' && (
                 <div className="section-content">
-                  <input
-                    type="file"
-                    accept="video/*"
-                    onChange={handleVideoUpload}
-                    id="upload-video"
-                    className="hidden-input"
-                  />
+                  <input type="file" accept="video/*" onChange={handleVideoUpload} id="upload-video" className="hidden-input" />
                   <label htmlFor="upload-video" className="upload-button">
                     {uploading ? 'Uploading...' : 'Upload Video'}
                   </label>
@@ -1206,7 +1686,11 @@ const ProjectEditor = () => {
                       {videos.map((video) => (
                         <div
                           key={video.id || video.filePath || video.filename}
-                          className={`video-item ${selectedVideo && (selectedVideo.id === video.id || selectedVideo.filePath === video.filePath) ? 'selected' : ''}`}
+                          className={`video-item ${
+                            selectedVideo && (selectedVideo.id === video.id || selectedVideo.filePath === video.filePath)
+                              ? 'selected'
+                              : ''
+                          }`}
                           draggable={true}
                           onDragStart={(e) => handleMediaDragStart(e, video, 'media')}
                           onClick={(e) => {
@@ -1243,13 +1727,7 @@ const ProjectEditor = () => {
               </button>
               {expandedSection === 'photos' && (
                 <div className="section-content">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoUpload}
-                    id="upload-photo"
-                    className="hidden-input"
-                  />
+                  <input type="file" accept="image/*" onChange={handlePhotoUpload} id="upload-photo" className="hidden-input" />
                   <label htmlFor="upload-photo" className="upload-button">
                     {uploading ? 'Uploading...' : 'Upload Photo'}
                   </label>
@@ -1280,13 +1758,7 @@ const ProjectEditor = () => {
               </button>
               {expandedSection === 'audios' && (
                 <div className="section-content">
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={handleAudioUpload}
-                    id="upload-audio"
-                    className="hidden-input"
-                  />
+                  <input type="file" accept="audio/*" onChange={handleAudioUpload} id="upload-audio" className="hidden-input" />
                   <label htmlFor="upload-audio" className="upload-button">
                     {uploading ? 'Uploading...' : 'Upload Audio'}
                   </label>
@@ -1295,12 +1767,7 @@ const ProjectEditor = () => {
                   ) : (
                     <div className="audio-list">
                       {audios.map((audio) => (
-                        <div
-                          key={audio.id}
-                          className="audio-item"
-                          draggable={true}
-                          onDragStart={(e) => handleMediaDragStart(e, audio, 'audio')}
-                        >
+                        <div key={audio.id} className="audio-item" draggable={true} onDragStart={(e) => handleMediaDragStart(e, audio, 'audio')}>
                           <img src={audio.waveformImage || '/images/audio.jpeg'} alt="Audio Waveform" className="audio-waveform" />
                           <div className="audio-title">{audio.displayName}</div>
                         </div>
@@ -1333,6 +1800,7 @@ const ProjectEditor = () => {
             <button className="control-button" onClick={handleSaveProject}>
               Save Project
             </button>
+            {/* Added Delete Button from old code */}
             <button
               className="delete-button"
               onClick={handleDeleteSegment}
@@ -1356,7 +1824,7 @@ const ProjectEditor = () => {
                 onVideoSelect={(time, video) => setCurrentTime(time)}
                 canvasDimensions={canvasDimensions}
                 addVideoToTimeline={addVideoToTimeline}
-                onTimeUpdate={handleTimeUpdate}
+                onTimeUpdate={(newTime) => handleTimeUpdate(newTime, false)}
                 onSegmentSelect={handleSegmentSelect}
                 videoLayers={videoLayers}
                 audioLayers={audioLayers}
@@ -1364,11 +1832,26 @@ const ProjectEditor = () => {
                 setAudioLayers={setAudioLayers}
                 thumbnailsGenerated={thumbnailsGenerated}
                 openTextTool={openTextTool}
-                onDeleteSegment={handleDeleteSegment}
+                timeScale={timeScale}
+                setTimeScale={setTimeScale}
+                setPlayheadFromParent={(setPlayhead) => (timelineSetPlayhead = setPlayhead)}
+                onDeleteSegment={handleDeleteSegment} // Pass delete handler to TimelineComponent
               />
             ) : (
               <div className="loading-message">Loading timeline...</div>
             )}
+          </div>
+          <div className="zoom-slider-container">
+            <input
+              type="range"
+              min={MIN_TIME_SCALE}
+              max={MAX_TIME_SCALE}
+              step={0.1}
+              value={timeScale}
+              onChange={(e) => setTimeScale(Number(e.target.value))}
+              className="zoom-slider"
+            />
+            <span>Zoom: {timeScale.toFixed(1)}px/s</span>
           </div>
         </div>
       </div>
@@ -1386,11 +1869,7 @@ const ProjectEditor = () => {
               <button className={`tool-button ${isTransformOpen ? 'active' : ''}`} onClick={toggleTransformPanel}>
                 Transform
               </button>
-              <button
-                className={`tool-button ${isFiltersOpen ? 'active' : ''}`}
-                onClick={toggleFiltersPanel}
-                disabled={!selectedSegment || (selectedSegment.type !== 'video' && selectedSegment.type !== 'image')}
-              >
+              <button className={`tool-button ${isFiltersOpen ? 'active' : ''}`} onClick={toggleFiltersPanel}>
                 Filters
               </button>
               <button
@@ -1404,516 +1883,19 @@ const ProjectEditor = () => {
             {selectedSegment && isTransformOpen && (
               <div className="transform-panel">
                 <h3>Transform</h3>
-                <div className="control-group">
-                  <label>Position X (px)</label>
-                  <input
-                    type="number"
-                    value={tempSegmentValues.positionX || 0}
-                    onChange={(e) => updateSegmentProperty('positionX', parseInt(e.target.value) || 0)}
-                    step="1"
-                    style={{ width: '100px' }}
-                  />
-                </div>
-                <div className="control-group">
-                  <label>Position Y (px)</label>
-                  <input
-                    type="number"
-                    value={tempSegmentValues.positionY || 0}
-                    onChange={(e) => updateSegmentProperty('positionY', parseInt(e.target.value) || 0)}
-                    step="1"
-                    style={{ width: '100px' }}
-                  />
-                </div>
-                {(selectedSegment.type === 'video' || selectedSegment.type === 'image') && (
-                  <div className="control-group">
-                    <label>Scale</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="5"
-                        step="0.1"
-                        value={tempSegmentValues.scale || 1}
-                        onChange={(e) => updateSegmentProperty('scale', parseFloat(e.target.value))}
-                      />
-                      <span>{(tempSegmentValues.scale || 1).toFixed(1)}x</span>
-                    </div>
-                  </div>
-                )}
+                {renderKeyframeControls()}
               </div>
             )}
-            {selectedSegment && (selectedSegment.type === 'video' || selectedSegment.type === 'image') && isFiltersOpen && (
-              <div className="filters-panel" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                <h3>Filters</h3>
-                <div className="filter-group">
-                  <h4>Color Adjustments</h4>
-                  <div className="control-group">
-                    <label>Brightness (-1 to 1)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="-1"
-                        max="1"
-                        step="0.1"
-                        value={tempFilterSettings.brightness || 0}
-                        onChange={(e) => updateFilterSetting('brightness', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.brightness || 0}
-                        onChange={(e) => updateFilterSetting('brightness', e.target.value)}
-                        step="0.1"
-                        min="-1"
-                        max="1"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Contrast (0 to 2)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.1"
-                        value={tempFilterSettings.contrast || 1}
-                        onChange={(e) => updateFilterSetting('contrast', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.contrast || 1}
-                        onChange={(e) => updateFilterSetting('contrast', e.target.value)}
-                        step="0.1"
-                        min="0"
-                        max="2"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Saturation (0 to 2)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.1"
-                        value={tempFilterSettings.saturation || 1}
-                        onChange={(e) => updateFilterSetting('saturation', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.saturation || 1}
-                        onChange={(e) => updateFilterSetting('saturation', e.target.value)}
-                        step="0.1"
-                        min="0"
-                        max="2"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Hue (-180 to 180)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="-180"
-                        max="180"
-                        step="1"
-                        value={tempFilterSettings.hue || 0}
-                        onChange={(e) => updateFilterSetting('hue', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.hue || 0}
-                        onChange={(e) => updateFilterSetting('hue', e.target.value)}
-                        step="1"
-                        min="-180"
-                        max="180"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Gamma (0.1 to 10)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="10"
-                        step="0.1"
-                        value={tempFilterSettings.gamma || 1}
-                        onChange={(e) => updateFilterSetting('gamma', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.gamma || 1}
-                        onChange={(e) => updateFilterSetting('gamma', e.target.value)}
-                        step="0.1"
-                        min="0.1"
-                        max="10"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Color Balance (R,G,B: -1 to 1)</label>
-                    <input
-                      type="text"
-                      value={tempFilterSettings.colorbalance || '0,0,0'}
-                      onChange={(e) => updateFilterSetting('colorbalance', e.target.value)}
-                      placeholder="r,g,b (e.g., 0.1,-0.2,0.3)"
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <div className="control-group">
-                    <label>Levels (in_min/in_max/out_min/out_max)</label>
-                    <input
-                      type="text"
-                      value={tempFilterSettings.levels || '0/255/0/255'}
-                      onChange={(e) => updateFilterSetting('levels', e.target.value)}
-                      placeholder="e.g., 0/255/16/235"
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <div className="control-group">
-                    <label>Curves (r:g:b)</label>
-                    <input
-                      type="text"
-                      value={tempFilterSettings.curves || "r='0/0 1/1':g='0/0 1/1':b='0/0 1/1'"}
-                      onChange={(e) => updateFilterSetting('curves', e.target.value)}
-                      placeholder="e.g., r='0/0 1/1':g='0/0 1/1':b='0/0 1/1'"
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                </div>
-                <div className="filter-group">
-                  <h4>Stylization</h4>
-                  <div className="control-group">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={tempFilterSettings.grayscale === '1'}
-                        onChange={(e) => updateFilterSetting('grayscale', e.target.checked ? '1' : '0')}
-                      />
-                      Grayscale
-                    </label>
-                  </div>
-                  <div className="control-group">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={tempFilterSettings.sepia === '1'}
-                        onChange={(e) => updateFilterSetting('sepia', e.target.checked ? '1' : '0')}
-                      />
-                      Sepia
-                    </label>
-                  </div>
-                  <div className="control-group">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={tempFilterSettings.vintage === '1'}
-                        onChange={(e) => updateFilterSetting('vintage', e.target.checked ? '1' : '0')}
-                      />
-                      Vintage
-                    </label>
-                  </div>
-                  <div className="control-group">
-                    <label>Posterize (2-256)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="2"
-                        max="256"
-                        step="1"
-                        value={tempFilterSettings.posterize || 8}
-                        onChange={(e) => updateFilterSetting('posterize', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.posterize || 8}
-                        onChange={(e) => updateFilterSetting('posterize', e.target.value)}
-                        step="1"
-                        min="2"
-                        max="256"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Solarize (0-1)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={tempFilterSettings.solarize || 0.5}
-                        onChange={(e) => updateFilterSetting('solarize', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.solarize || 0.5}
-                        onChange={(e) => updateFilterSetting('solarize', e.target.value)}
-                        step="0.1"
-                        min="0"
-                        max="1"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={tempFilterSettings.invert === '1'}
-                        onChange={(e) => updateFilterSetting('invert', e.target.checked ? '1' : '0')}
-                      />
-                      Invert
-                    </label>
-                  </div>
-                </div>
-                <div className="filter-group">
-                  <h4>Blur and Sharpen</h4>
-                  <div className="control-group">
-                    <label>Blur (0-10)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="10"
-                        step="1"
-                        value={tempFilterSettings.blur || 0}
-                        onChange={(e) => updateFilterSetting('blur', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.blur || 0}
-                        onChange={(e) => updateFilterSetting('blur', e.target.value)}
-                        step="1"
-                        min="0"
-                        max="10"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Sharpen (-2 to 2)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="-2"
-                        max="2"
-                        step="0.1"
-                        value={tempFilterSettings.sharpen || 0}
-                        onChange={(e) => updateFilterSetting('sharpen', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.sharpen || 0}
-                        onChange={(e) => updateFilterSetting('sharpen', e.target.value)}
-                        step="0.1"
-                        min="-2"
-                        max="2"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Edge Detection (0-1)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={tempFilterSettings.edge || 0.5}
-                        onChange={(e) => updateFilterSetting('edge', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.edge || 0.5}
-                        onChange={(e) => updateFilterSetting('edge', e.target.value)}
-                        step="0.1"
-                        min="0"
-                        max="1"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="filter-group">
-                  <h4>Distortion and Noise</h4>
-                  <div className="control-group">
-                    <label>Noise (0-100)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="1"
-                        value={tempFilterSettings.noise || 0}
-                        onChange={(e) => updateFilterSetting('noise', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.noise || 0}
-                        onChange={(e) => updateFilterSetting('noise', e.target.value)}
-                        step="1"
-                        min="0"
-                        max="100"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Vignette (1-10)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        step="1"
-                        value={tempFilterSettings.vignette || 4}
-                        onChange={(e) => updateFilterSetting('vignette', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.vignette || 4}
-                        onChange={(e) => updateFilterSetting('vignette', e.target.value)}
-                        step="1"
-                        min="1"
-                        max="10"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Pixelize (2-64)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="2"
-                        max="64"
-                        step="1"
-                        value={tempFilterSettings.pixelize || 8}
-                        onChange={(e) => updateFilterSetting('pixelize', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.pixelize || 8}
-                        onChange={(e) => updateFilterSetting('pixelize', e.target.value)}
-                        step="1"
-                        min="2"
-                        max="64"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="filter-group">
-                  <h4>Transformation</h4>
-                  <div className="control-group">
-                    <label>Rotate (degrees)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="-360"
-                        max="360"
-                        step="1"
-                        value={tempFilterSettings.rotate || 0}
-                        onChange={(e) => updateFilterSetting('rotate', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.rotate || 0}
-                        onChange={(e) => updateFilterSetting('rotate', e.target.value)}
-                        step="1"
-                        min="-360"
-                        max="360"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                  </div>
-                  <div className="control-group">
-                    <label>Flip</label>
-                    <select
-                      value={tempFilterSettings.flip || 'none'}
-                      onChange={(e) => updateFilterSetting('flip', e.target.value)}
-                    >
-                      <option value="none">None</option>
-                      <option value="horizontal">Horizontal</option>
-                      <option value="vertical">Vertical</option>
-                    </select>
-                  </div>
-                  <div className="control-group">
-                    <label>Crop (w:h:x:y)</label>
-                    <input
-                      type="text"
-                      value={tempFilterSettings.crop || `${canvasDimensions.width}:${canvasDimensions.height}:0:0`}
-                      onChange={(e) => updateFilterSetting('crop', e.target.value)}
-                      placeholder="e.g., 720:480:0:0"
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <div className="control-group">
-                    <label>Opacity (0-1)</label>
-                    <div className="slider-container">
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={tempFilterSettings.opacity || 1}
-                        onChange={(e) => updateFilterSetting('opacity', e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        value={tempFilterSettings.opacity || 1}
-                        onChange={(e) => updateFilterSetting('opacity', e.target.value)}
-                        step="0.1"
-                        min="0"
-                        max="1"
-                        style={{ width: '60px', marginLeft: '10px' }}
-                      />
-                    </div>
-                    </div>
-                </div>
-                <div className="filter-actions">
-                  <button onClick={handleApplyFilter} disabled={Object.keys(tempFilterSettings).length === 0}>
-                    Apply Filters
-                  </button>
-                </div>
-                {selectedSegment.filters && selectedSegment.filters.length > 0 && (
-                  <div className="applied-filters">
-                    <h4>Applied Filters</h4>
-                    {selectedSegment.filters.map((filter) => (
-                      <div key={filter.filterId} className="applied-filter-item">
-                        {filter.filterName}: {filter.filterValue}
-                        <button
-                          onClick={() => handleRemoveFilter(filter.filterName)}
-                          className="remove-filter-button"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {selectedSegment && selectedSegment.type === 'text' && isTextToolOpen && (
+            {isFiltersOpen && renderFilterControls()}
+            {isTextToolOpen && selectedSegment && selectedSegment.type === 'text' && (
               <div className="text-tool-panel">
                 <h3>Text Settings</h3>
                 <div className="control-group">
-                  <label>Text</label>
-                  <textarea
+                  <label>Text Content</label>
+                  <input
+                    type="text"
                     value={textSettings.text}
                     onChange={(e) => updateTextSettings({ ...textSettings, text: e.target.value })}
-                    rows="3"
-                    style={{ width: '100%' }}
                   />
                 </div>
                 <div className="control-group">
@@ -1926,20 +1908,15 @@ const ProjectEditor = () => {
                     <option value="Helvetica">Helvetica</option>
                     <option value="Times New Roman">Times New Roman</option>
                     <option value="Courier New">Courier New</option>
-                    <option value="Verdana">Verdana</option>
                   </select>
                 </div>
                 <div className="control-group">
-                  <label>Font Size (px)</label>
+                  <label>Font Size</label>
                   <input
                     type="number"
                     value={textSettings.fontSize}
-                    onChange={(e) =>
-                      updateTextSettings({ ...textSettings, fontSize: parseInt(e.target.value) || 24 })
-                    }
-                    min="8"
-                    step="1"
-                    style={{ width: '100px' }}
+                    onChange={(e) => updateTextSettings({ ...textSettings, fontSize: parseInt(e.target.value) || 24 })}
+                    min="1"
                   />
                 </div>
                 <div className="control-group">
@@ -1956,34 +1933,21 @@ const ProjectEditor = () => {
                     type="color"
                     value={textSettings.backgroundColor === 'transparent' ? '#000000' : textSettings.backgroundColor}
                     onChange={(e) =>
-                      updateTextSettings({ ...textSettings, backgroundColor: e.target.value })
+                      updateTextSettings({
+                        ...textSettings,
+                        backgroundColor: e.target.value === '#000000' ? 'transparent' : e.target.value,
+                      })
                     }
                   />
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={textSettings.backgroundColor === 'transparent'}
-                      onChange={(e) =>
-                        updateTextSettings({
-                          ...textSettings,
-                          backgroundColor: e.target.checked ? 'transparent' : '#000000',
-                        })
-                      }
-                    />
-                    Transparent
-                  </label>
                 </div>
                 <div className="control-group">
                   <label>Duration (s)</label>
                   <input
                     type="number"
                     value={textSettings.duration}
-                    onChange={(e) =>
-                      updateTextSettings({ ...textSettings, duration: parseFloat(e.target.value) || 5 })
-                    }
-                    min="1"
+                    onChange={(e) => updateTextSettings({ ...textSettings, duration: parseFloat(e.target.value) || 5 })}
+                    min="0.1"
                     step="0.1"
-                    style={{ width: '100px' }}
                   />
                 </div>
                 <button onClick={handleSaveTextSegment}>Save Text</button>

@@ -31,9 +31,11 @@ const TimelineComponent = ({
   setAudioLayers,
   thumbnailsGenerated,
   openTextTool,
+  timeScale,
+  setTimeScale,
+  setPlayheadFromParent,
 }) => {
   const [timelineVideos, setTimelineVideos] = useState([]);
-  const [timeScale, setTimeScale] = useState(50);
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [draggingItem, setDraggingItem] = useState(null);
@@ -50,44 +52,69 @@ const TimelineComponent = ({
   const [selectedSegment, setSelectedSegment] = useState(null);
   const [isSplitMode, setIsSplitMode] = useState(false);
 
-  const SNAP_THRESHOLD = 0.5;
+  const SNAP_THRESHOLD = 0.1;
   const API_BASE_URL = 'http://localhost:8080';
+  const MIN_TIME_SCALE = 0.1;
+  const MAX_TIME_SCALE = 200;
 
   const timelineRef = useRef(null);
   const playheadRef = useRef(null);
   const playIntervalRef = useRef(null);
 
-  const saveHistory = useCallback((newVideoLayers, newAudioLayers) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(JSON.stringify({ videoLayers: newVideoLayers, audioLayers: newAudioLayers }));
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  }, [history, historyIndex]);
+  const saveHistory = useCallback(
+    (newVideoLayers, newAudioLayers) => {
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push(JSON.stringify({ videoLayers: newVideoLayers, audioLayers: newAudioLayers }));
+      setHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+    },
+    [history, historyIndex]
+  );
 
-  const autoSave = useCallback((newVideoLayers, newAudioLayers) => {
-    const autoSaveTimeout = setTimeout(async () => {
-      if (!projectId || !sessionId) return;
-      try {
-        setIsSaving(true);
-        const token = localStorage.getItem('token');
-        const segments = flattenLayersToSegments([...newVideoLayers, ...newAudioLayers]);
-        await axios.post(
-          `${API_BASE_URL}/projects/${projectId}/save`,
-          { timelineState: { segments } },
-          {
-            params: { sessionId },
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-        console.log('Project auto-saved');
-      } catch (error) {
-        console.error('Error during auto-save:', error);
-      } finally {
-        setIsSaving(false);
-      }
-    }, 1000);
-    return () => clearTimeout(autoSaveTimeout);
-  }, [projectId, sessionId]);
+  const autoSave = useCallback(
+    (newVideoLayers, newAudioLayers) => {
+      const autoSaveTimeout = setTimeout(async () => {
+        if (!projectId || !sessionId) return;
+        try {
+          setIsSaving(true);
+          const token = localStorage.getItem('token');
+          const segments = flattenLayersToSegments([...newVideoLayers, ...newAudioLayers]);
+          await axios.post(
+            `${API_BASE_URL}/projects/${projectId}/save`,
+            { timelineState: { segments } },
+            {
+              params: { sessionId },
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          console.log('Project auto-saved');
+        } catch (error) {
+          console.error('Error during auto-save:', error);
+        } finally {
+          setIsSaving(false);
+        }
+      }, 1000);
+      return () => clearTimeout(autoSaveTimeout);
+    },
+    [projectId, sessionId]
+  );
+
+  // Unified function to update both playhead and currentTime
+  const updatePlayheadAndTime = (newTime, shouldUpdateParent = true) => {
+    setPlayhead(newTime);
+    setCurrentTime(newTime);
+    if (shouldUpdateParent && onTimeUpdate) {
+      onTimeUpdate(newTime);
+    }
+  };
+
+  useEffect(() => {
+    if (setPlayheadFromParent) {
+      setPlayheadFromParent((newTime, shouldUpdateParent = true) =>
+        updatePlayheadAndTime(newTime, shouldUpdateParent)
+      );
+    }
+  }, [setPlayheadFromParent]);
 
   const generateVideoThumbnail = async (videoPath) => {
     const fullVideoPath = `${API_BASE_URL}/videos/${encodeURIComponent(videoPath.split('/').pop())}`;
@@ -99,7 +126,7 @@ const TimelineComponent = ({
       video.preload = 'metadata';
 
       video.onloadeddata = () => {
-        video.currentTime = 1; // Capture frame at 1 second
+        video.currentTime = 1;
       };
 
       video.onseeked = () => {
@@ -189,22 +216,21 @@ const TimelineComponent = ({
         const newVideoLayers = [[], [], []];
         const newAudioLayers = [[], [], []];
 
-        // Process video segments
         if (timelineState.segments && timelineState.segments.length > 0) {
           for (const segment of timelineState.segments) {
             const layerIndex = segment.layer || 0;
-            if (layerIndex < 0) continue; // Skip audio segments
+            if (layerIndex < 0) continue;
             if (segment.sourceVideoPath) {
               while (newVideoLayers.length <= layerIndex) newVideoLayers.push([]);
               let videoFileName = segment.sourceVideoPath;
               const normalizedVideoPath = videoFileName.startsWith('videos/') ? videoFileName.substring(7) : videoFileName;
-              let video = videos.find(v => {
-                const vPath = (v.filePath || v.filename);
+              let video = videos.find((v) => {
+                const vPath = v.filePath || v.filename;
                 const normalizedVPath = vPath.startsWith('videos/') ? vPath.substring(7) : vPath;
                 return normalizedVPath === normalizedVideoPath;
               });
               if (video) {
-                const thumbnail = (await generateVideoThumbnail(normalizedVideoPath));
+                const thumbnail = await generateVideoThumbnail(normalizedVideoPath);
                 newVideoLayers[layerIndex].push({
                   ...video,
                   type: 'video',
@@ -225,7 +251,6 @@ const TimelineComponent = ({
           }
         }
 
-        // Process image segments from timelineState.imageSegments
         if (timelineState.imageSegments && timelineState.imageSegments.length > 0) {
           for (const imageSegment of timelineState.imageSegments) {
             const layerIndex = imageSegment.layer || 0;
@@ -256,7 +281,6 @@ const TimelineComponent = ({
           }
         }
 
-        // Process text segments
         if (timelineState.textSegments && timelineState.textSegments.length > 0) {
           for (const textSegment of timelineState.textSegments) {
             const layerIndex = textSegment.layer || 0;
@@ -279,7 +303,6 @@ const TimelineComponent = ({
           }
         }
 
-        // Process audio segments
         if (timelineState.audioSegments && timelineState.audioSegments.length > 0) {
           for (const audioSegment of timelineState.audioSegments) {
             const backendLayer = audioSegment.layer || -1;
@@ -290,7 +313,7 @@ const TimelineComponent = ({
               type: 'audio',
               fileName: audioSegment.audioFileName || audioSegment.audioPath.split('/').pop(),
               startTime: audioSegment.timelineStartTime || 0,
-              duration: (audioSegment.timelineEndTime - audioSegment.timelineStartTime) || 0,
+              duration: audioSegment.timelineEndTime - audioSegment.timelineStartTime || 0,
               timelineStartTime: audioSegment.timelineStartTime || 0,
               timelineEndTime: audioSegment.timelineEndTime || 0,
               layer: backendLayer,
@@ -307,8 +330,8 @@ const TimelineComponent = ({
         setHistory([]);
         setHistoryIndex(-1);
         let maxEndTime = 0;
-        [...newVideoLayers, ...newAudioLayers].forEach(layer => {
-          layer.forEach(item => {
+        [...newVideoLayers, ...newAudioLayers].forEach((layer) => {
+          layer.forEach((item) => {
             const endTime = item.startTime + item.duration;
             if (endTime > maxEndTime) maxEndTime = endTime;
           });
@@ -346,7 +369,7 @@ const TimelineComponent = ({
     autoSave,
     loadProjectTimeline,
     API_BASE_URL,
-    timelineRef
+    timelineRef,
   });
 
   const imageHandler = ImageSegmentHandler({
@@ -404,8 +427,8 @@ const TimelineComponent = ({
   useEffect(() => {
     const calculateDuration = () => {
       let maxDuration = 0;
-      [...videoLayers, ...audioLayers].forEach(layer => {
-        layer.forEach(item => {
+      [...videoLayers, ...audioLayers].forEach((layer) => {
+        layer.forEach((item) => {
           const endTime = item.startTime + item.duration;
           if (endTime > maxDuration) maxDuration = endTime;
         });
@@ -420,7 +443,7 @@ const TimelineComponent = ({
     e.preventDefault();
     e.stopPropagation();
     const dragElements = document.querySelectorAll('.dragging');
-    dragElements.forEach(el => el.classList.remove('dragging'));
+    dragElements.forEach((el) => el.classList.remove('dragging'));
     if (timelineRef.current) timelineRef.current.classList.remove('showing-new-layer');
 
     setDraggingItem(null);
@@ -504,16 +527,14 @@ const TimelineComponent = ({
     if (reversedIndex <= totalVideoLayers) {
       clickedLayerIndex = totalVideoLayers - reversedIndex;
     } else if (reversedIndex >= totalVideoLayers + 1 && reversedIndex < totalLayers - 1) {
-      clickedLayerIndex = (totalLayers - 2 - reversedIndex);
+      clickedLayerIndex = totalLayers - 2 - reversedIndex;
       isAudioLayer = true;
     } else {
       clickedLayerIndex = -1;
     }
 
     if (!isSplitMode) {
-      setPlayhead(clickTime);
-      setCurrentTime(clickTime);
-      if (onTimeUpdate) onTimeUpdate(clickTime);
+      updatePlayheadAndTime(clickTime);
       setPlayingVideoId(null);
       setSelectedSegment(null);
       if (onSegmentSelect) onSegmentSelect(null);
@@ -524,7 +545,7 @@ const TimelineComponent = ({
 
     if (adjustedLayerIndex >= 0 && adjustedLayerIndex < targetLayers.length) {
       const layerItems = targetLayers[adjustedLayerIndex];
-      const foundItem = layerItems.find(item => {
+      const foundItem = layerItems.find((item) => {
         const itemStart = item.startTime;
         const itemEnd = itemStart + item.duration;
         return clickTime >= itemStart && clickTime < itemEnd;
@@ -565,22 +586,15 @@ const TimelineComponent = ({
       clearInterval(playIntervalRef.current);
     } else {
       playIntervalRef.current = setInterval(() => {
-        setPlayhead(prev => {
+        updatePlayheadAndTime((prev) => {
           const newPosition = prev + 0.1;
           if (newPosition >= totalDuration) {
             clearInterval(playIntervalRef.current);
             setIsPlaying(false);
-            setCurrentTime(0);
-            if (onTimeUpdate) onTimeUpdate(0);
+            updatePlayheadAndTime(0);
             return 0;
           }
-          if (onTimeUpdate) onTimeUpdate(newPosition);
           return newPosition;
-        });
-        setCurrentTime(prev => {
-          const newTime = prev + 0.1;
-          if (newTime >= totalDuration) return 0;
-          return newTime;
         });
       }, 100);
     }
@@ -599,7 +613,7 @@ const TimelineComponent = ({
     setPlayingVideoId(videoId);
     let selected = null;
     for (let i = 0; i < videoLayers.length; i++) {
-      const item = videoLayers[i].find(v => v.id === videoId);
+      const item = videoLayers[i].find((v) => v.id === videoId);
       if (item) {
         selected = { ...item, layerIndex: i };
         setSelectedSegment(selected);
@@ -609,7 +623,7 @@ const TimelineComponent = ({
     }
     if (!selected) {
       for (let i = 0; i < audioLayers.length; i++) {
-        const item = audioLayers[i].find(v => v.id === videoId);
+        const item = audioLayers[i].find((v) => v.id === videoId);
         if (item) {
           selected = { ...item, layerIndex: i };
           setSelectedSegment(selected);
@@ -620,75 +634,10 @@ const TimelineComponent = ({
     if (onSegmentSelect) onSegmentSelect(selected);
   };
 
-  // NEW: Handle delete segment action
-  const handleDeleteSegment = async (segment) => {
-    if (!segment || !sessionId || !projectId) return;
-
-    try {
-      const token = localStorage.getItem('token');
-      let endpoint = '';
-      switch (segment.type) {
-        case 'video':
-          endpoint = `${API_BASE_URL}/projects/timeline/video/${sessionId}/${segment.id}`;
-          break;
-        case 'audio':
-          endpoint = `${API_BASE_URL}/projects/timeline/audio/${sessionId}/${segment.id}`;
-          break;
-        case 'image':
-          endpoint = `${API_BASE_URL}/projects/timeline/image/${sessionId}/${segment.id}`;
-          break;
-        case 'text':
-          endpoint = `${API_BASE_URL}/projects/timeline/text/${sessionId}/${segment.id}`;
-          break;
-        default:
-          console.error('Unknown segment type:', segment.type);
-          return;
-      }
-
-      await axios.delete(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (segment.type === 'audio') {
-        setAudioLayers((prevLayers) => {
-          const newLayers = [...prevLayers];
-          const layerIndex = Math.abs(segment.layer) - 1;
-          newLayers[layerIndex] = newLayers[layerIndex].filter(
-            (item) => item.id !== segment.id
-          );
-          return newLayers;
-        });
-      } else {
-        setVideoLayers((prevLayers) => {
-          const newLayers = [...prevLayers];
-          newLayers[segment.layer] = newLayers[segment.layer].filter(
-            (item) => item.id !== segment.id
-          );
-          return newLayers;
-        });
-      }
-
-      let maxEndTime = 0;
-      [...videoLayers, ...audioLayers].forEach(layer => {
-        layer.forEach(item => {
-          const endTime = item.startTime + item.duration;
-          if (endTime > maxEndTime) maxEndTime = endTime;
-        });
-      });
-      setTotalDuration(maxEndTime);
-
-      setSelectedSegment(null);
-      if (onSegmentSelect) onSegmentSelect(null);
-      saveHistory(videoLayers, audioLayers); // Add to history for undo
-    } catch (error) {
-      console.error('Error deleting segment:', error);
-    }
-  };
-
   const flattenLayersToSegments = (layers) => {
     const segments = [];
     layers.forEach((layer, layerIndex) => {
-      layer.forEach(item => {
+      layer.forEach((item) => {
         if (item.type === 'text') {
           segments.push({
             id: item.id,
@@ -775,7 +724,7 @@ const TimelineComponent = ({
   }, [videoLayers, audioLayers, history.length, saveHistory]);
 
   const toggleSplitMode = () => {
-    setIsSplitMode(prev => !prev);
+    setIsSplitMode((prev) => !prev);
     setDraggingItem(null);
     setResizingItem(null);
   };
@@ -798,8 +747,6 @@ const TimelineComponent = ({
         canUndo={canUndo}
         canRedo={canRedo}
         isSaving={isSaving}
-        timeScale={timeScale}
-        setTimeScale={setTimeScale}
         onAddTextClick={openTextTool}
         toggleSplitMode={toggleSplitMode}
         isSplitMode={isSplitMode}
@@ -815,11 +762,7 @@ const TimelineComponent = ({
           onDrop={handleDrop}
         >
           <div className="playhead" ref={playheadRef} style={{ left: `${playhead * timeScale}px` }}></div>
-          <div
-            className="timeline-layer new-layer-drop-area"
-            onDragOver={e => e.preventDefault()}
-            onDrop={handleDrop}
-          >
+          <div className="timeline-layer new-layer-drop-area" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
             <div className="layer-label">Drop to create new layer</div>
           </div>
           {[...videoLayers].reverse().map((layer, reversedIndex) => {
@@ -839,8 +782,7 @@ const TimelineComponent = ({
                     if (onSegmentSelect) onSegmentSelect({ ...item, layerIndex: item.layer });
                   }}
                   selectedSegmentId={selectedSegment ? selectedSegment.id : null}
-                  // NEW: Pass delete handler to TimelineLayer
-                  handleDeleteSegment={handleDeleteSegment}
+                  showResizeHandles={(item) => item.id === (selectedSegment ? selectedSegment.id : null)}
                 />
               </div>
             );
@@ -860,20 +802,21 @@ const TimelineComponent = ({
                 handleVideoSelect={handleVideoSelect}
                 handleEditTextSegment={() => {}}
                 selectedSegmentId={selectedSegment ? selectedSegment.id : null}
-                // NEW: Pass delete handler to TimelineLayer
-                handleDeleteSegment={handleDeleteSegment}
+                showResizeHandles={(item) => item.id === (selectedSegment ? selectedSegment.id : null)}
               />
             </div>
           ))}
-          <div
-            className="timeline-layer new-layer-drop-area"
-            onDragOver={e => e.preventDefault()}
-            onDrop={handleDrop}
-          >
+          <div className="timeline-layer new-layer-drop-area" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
             <div className="layer-label">Drop to create new layer</div>
           </div>
           <SnapIndicators snapIndicators={snapIndicators} timeScale={timeScale} layers={[...videoLayers, ...audioLayers]} />
-          <DraggingGhost draggingItem={draggingItem} snapIndicators={snapIndicators} timeScale={timeScale} dragLayer={dragLayer} layers={[...videoLayers, ...audioLayers]} />
+          <DraggingGhost
+            draggingItem={draggingItem}
+            snapIndicators={snapIndicators}
+            timeScale={timeScale}
+            dragLayer={dragLayer}
+            layers={[...videoLayers, ...audioLayers]}
+          />
         </div>
       </div>
     </div>
