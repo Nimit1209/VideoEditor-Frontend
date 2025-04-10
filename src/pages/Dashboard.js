@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useNavigate, useLocation } from 'react-router-dom'; // Added useLocation
+import { useNavigate, useLocation } from 'react-router-dom';
 import '../CSS/Dashboard.css';
 
 const API_BASE_URL = 'http://localhost:8080';
@@ -11,12 +11,62 @@ const Dashboard = () => {
   const [width, setWidth] = useState(1920);
   const [height, setHeight] = useState(1080);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState({ 
+    firstName: '', 
+    lastName: '', 
+    picture: null 
+  });
   const navigate = useNavigate();
-  const location = useLocation(); // Added to access navigation state
+  const location = useLocation();
 
   useEffect(() => {
     fetchProjects();
+    fetchUserProfile();
   }, []);
+
+  // Fetch user profile from /auth/me endpoint with enhanced error logging
+  const fetchUserProfile = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.log('No token found, redirecting to login');
+        navigate('/');
+        return;
+      }
+      const response = await axios.get(`${API_BASE_URL}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const fullName = response.data.name || '';
+      const nameParts = fullName.trim().split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+      setUserProfile({
+        firstName: firstName,
+        lastName: lastName,
+        picture: response.data.picture || null,
+      });
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      // Added: Detailed error logging
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+        console.error('Response headers:', error.response.headers);
+      }
+      if (error.response?.status === 401) {
+        console.log('Unauthorized, redirecting to login');
+        navigate('/');
+      }
+      setUserProfile({ firstName: '', lastName: '', picture: null });
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setIsProfileDropdownOpen(false);
+    navigate('/');
+  };
 
   const generateVideoThumbnail = async (videoPath) => {
     const fullVideoPath = `${API_BASE_URL}/videos/${encodeURIComponent(videoPath.split('/').pop())}`;
@@ -204,6 +254,10 @@ const Dashboard = () => {
     setIsDropdownOpen(!isDropdownOpen);
   };
 
+  const toggleProfileDropdown = () => {
+    setIsProfileDropdownOpen(!isProfileDropdownOpen);
+  };
+
   const handlePresetSelect = (presetWidth, presetHeight) => {
     setWidth(presetWidth);
     setHeight(presetHeight);
@@ -281,12 +335,40 @@ const Dashboard = () => {
               </div>
             )}
           </div>
+          <div className="profile-section">
+            <div className="profile-icon" onClick={toggleProfileDropdown}>
+              {userProfile.picture ? (
+                <img
+                  src={userProfile.picture}
+                  alt="Profile"
+                  className="profile-picture"
+                />
+              ) : (
+                <div className="default-profile-icon">
+                  {userProfile.firstName && userProfile.firstName.length > 0 
+                    ? userProfile.firstName.charAt(0).toUpperCase() 
+                    : 'U'}
+                </div>
+              )}
+            </div>
+            {isProfileDropdownOpen && (
+              <div className="profile-dropdown">
+                <div className="profile-name">
+                  {(userProfile.firstName || userProfile.lastName) 
+                    ? `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim() 
+                    : 'Unknown User'}
+                </div>
+                <div className="profile-dropdown-item" onClick={handleLogout}>
+                  Logout
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
       <section className="projects-section">
         <h2>My Projects</h2>
-        {/* Display error message if redirected with state */}
         {location.state?.error && (
           <p className="error-message">{location.state.error}</p>
         )}
