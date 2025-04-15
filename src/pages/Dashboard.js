@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
 import '../CSS/Dashboard.css';
+import { FaTrash } from 'react-icons/fa';
 
 const API_BASE_URL = 'http://localhost:8080';
 
@@ -10,12 +11,13 @@ const Dashboard = () => {
   const [newProjectName, setNewProjectName] = useState('');
   const [width, setWidth] = useState(1920);
   const [height, setHeight] = useState(1080);
+  const [fps, setFps] = useState(25); // New state for FPS
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
-  const [userProfile, setUserProfile] = useState({ 
-    firstName: '', 
-    lastName: '', 
-    picture: null 
+  const [userProfile, setUserProfile] = useState({
+    firstName: '',
+    lastName: '',
+    picture: null,
   });
   const navigate = useNavigate();
   const location = useLocation();
@@ -25,7 +27,6 @@ const Dashboard = () => {
     fetchUserProfile();
   }, []);
 
-  // Fetch user profile from /auth/me endpoint with enhanced error logging
   const fetchUserProfile = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -48,14 +49,7 @@ const Dashboard = () => {
       });
     } catch (error) {
       console.error('Error fetching user profile:', error);
-      // Added: Detailed error logging
-      if (error.response) {
-        console.error('Response data:', error.response.data);
-        console.error('Response status:', error.response.status);
-        console.error('Response headers:', error.response.headers);
-      }
       if (error.response?.status === 401) {
-        console.log('Unauthorized, redirecting to login');
         navigate('/');
       }
       setUserProfile({ firstName: '', lastName: '', picture: null });
@@ -168,7 +162,6 @@ const Dashboard = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       const projectList = response.data;
-      console.log('Fetched projects for user:', projectList);
 
       const projectsWithThumbnails = await Promise.all(
         projectList.map(async (project) => {
@@ -215,6 +208,11 @@ const Dashboard = () => {
       return;
     }
 
+    if (fps <= 0 || fps > 120) {
+      alert('FPS must be between 1 and 120.');
+      return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       if (!token) {
@@ -225,10 +223,11 @@ const Dashboard = () => {
 
       const response = await axios.post(
         `${API_BASE_URL}/projects`,
-        { 
+        {
           name: newProjectName,
           width: width,
-          height: height
+          height: height,
+          fps: fps, // Include FPS in the request
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -236,12 +235,50 @@ const Dashboard = () => {
       setNewProjectName('');
       setWidth(1920);
       setHeight(1080);
+      setFps(25); // Reset FPS to default
       setIsDropdownOpen(false);
       navigate(`/projecteditor/${response.data.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
       if (error.response?.status === 401) {
         navigate('/');
+      } else if (error.response?.status === 400) {
+        alert('Invalid project parameters: ' + error.response.data);
+      } else {
+        alert('Failed to create project');
+      }
+    }
+  };
+
+  const deleteProject = async (projectId) => {
+    const confirmDelete = window.confirm('Are you sure about deleting this Project?');
+    if (!confirmDelete) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.error('No token found. User might not be authenticated.');
+        navigate('/');
+        return;
+      }
+
+      await axios.delete(`${API_BASE_URL}/projects/${projectId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      setProjects(projects.filter((project) => project.id !== projectId));
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      if (error.response?.status === 401) {
+        navigate('/');
+      } else if (error.response?.status === 403) {
+        alert('Unauthorized to delete this project');
+      } else if (error.response?.status === 404) {
+        alert('Project not found');
+      } else {
+        alert('Failed to delete project');
       }
     }
   };
@@ -258,9 +295,10 @@ const Dashboard = () => {
     setIsProfileDropdownOpen(!isProfileDropdownOpen);
   };
 
-  const handlePresetSelect = (presetWidth, presetHeight) => {
+  const handlePresetSelect = (presetWidth, presetHeight, presetFps = 25) => {
     setWidth(presetWidth);
     setHeight(presetHeight);
+    setFps(presetFps); // Set FPS for the preset
   };
 
   return (
@@ -300,33 +338,41 @@ const Dashboard = () => {
                       onChange={(e) => setHeight(parseInt(e.target.value, 10))}
                       className="dropdown-input dimension-input"
                     />
+                    <input
+                      type="number"
+                      placeholder="FPS"
+                      value={fps}
+                      onChange={(e) => setFps(parseInt(e.target.value, 10))}
+                      className="dropdown-input dimension-input"
+                    />
                   </div>
                 </div>
                 <div className="dropdown-presets">
                   <div className="dropdown-subtitle">Presets</div>
-                  <div
-                    className="dropdown-item"
-                    onClick={() => handlePresetSelect(1920, 1080)}
-                  >
-                    YouTube (1920x1080)
+                  <div className="dropdown-item" onClick={() => handlePresetSelect(1920, 1080, 30)}>
+                    YouTube (1920x1080, 30 FPS)
                   </div>
-                  <div
-                    className="dropdown-item"
-                    onClick={() => handlePresetSelect(1080, 1920)}
-                  >
-                    YouTube Shorts (1080x1920)
+                  <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
+                    YouTube Shorts (1080x1920, 60 FPS)
                   </div>
-                  <div
-                    className="dropdown-item"
-                    onClick={() => handlePresetSelect(1080, 1920)}
-                  >
-                    Instagram Reels (1080x1920)
+                  <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
+                    Instagram Reels (1080x1920, 60 FPS)
                   </div>
-                  <div
-                    className="dropdown-item"
-                    onClick={() => handlePresetSelect(1080, 1920)}
-                  >
-                    TikTok (1080x1920)
+                  <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
+                    TikTok (1080x1920, 60 FPS)
+                  </div>
+                  <div className="dropdown-subtitle">FPS Options</div>
+                  <div className="dropdown-item" onClick={() => setFps(24)}>
+                    24 FPS (Cinematic)
+                  </div>
+                  <div className="dropdown-item" onClick={() => setFps(25)}>
+                    25 FPS (Standard)
+                  </div>
+                  <div className="dropdown-item" onClick={() => setFps(30)}>
+                    30 FPS (Common)
+                  </div>
+                  <div className="dropdown-item" onClick={() => setFps(60)}>
+                    60 FPS (Smooth)
                   </div>
                 </div>
                 <button className="dropdown-create-button" onClick={createNewProject}>
@@ -338,15 +384,11 @@ const Dashboard = () => {
           <div className="profile-section">
             <div className="profile-icon" onClick={toggleProfileDropdown}>
               {userProfile.picture ? (
-                <img
-                  src={userProfile.picture}
-                  alt="Profile"
-                  className="profile-picture"
-                />
+                <img src={userProfile.picture} alt="Profile" className="profile-picture" />
               ) : (
                 <div className="default-profile-icon">
-                  {userProfile.firstName && userProfile.firstName.length > 0 
-                    ? userProfile.firstName.charAt(0).toUpperCase() 
+                  {userProfile.firstName && userProfile.firstName.length > 0
+                    ? userProfile.firstName.charAt(0).toUpperCase()
                     : 'U'}
                 </div>
               )}
@@ -354,8 +396,8 @@ const Dashboard = () => {
             {isProfileDropdownOpen && (
               <div className="profile-dropdown">
                 <div className="profile-name">
-                  {(userProfile.firstName || userProfile.lastName) 
-                    ? `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim() 
+                  {(userProfile.firstName || userProfile.lastName)
+                    ? `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim()
                     : 'Unknown User'}
                 </div>
                 <div className="profile-dropdown-item" onClick={handleLogout}>
@@ -369,25 +411,33 @@ const Dashboard = () => {
 
       <section className="projects-section">
         <h2>My Projects</h2>
-        {location.state?.error && (
-          <p className="error-message">{location.state.error}</p>
-        )}
+        {location.state?.error && <p className="error-message">{location.state.error}</p>}
         <div className="project-grid">
           {projects.length === 0 ? (
             <p className="no-projects">No projects yet. Create one to get started!</p>
           ) : (
             projects.map((project) => (
-              <div
-                key={project.id}
-                className="project-card"
-                onClick={() => loadProject(project.id)}
-              >
-                <div className="thumbnail-container">
+              <div key={project.id} className="project-card">
+                <div className="thumbnail-container" onClick={() => loadProject(project.id)}>
                   {project.thumbnail ? (
-                    <img src={project.thumbnail} alt={`${project.name} thumbnail`} className="project-thumbnail" />
+                    <img
+                      src={project.thumbnail}
+                      alt={`${project.name} thumbnail`}
+                      className="project-thumbnail"
+                    />
                   ) : (
                     <div className="thumbnail-placeholder">No Preview Available</div>
                   )}
+                  <div
+                    className="delete-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteProject(project.id);
+                    }}
+                    title="Delete Project"
+                  >
+                    <FaTrash />
+                  </div>
                 </div>
                 <h3 className="project-title">{project.name}</h3>
               </div>
