@@ -1,20 +1,23 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import '../CSS/VideoPreview.css';
+import fx from 'glfx';
 
 const API_BASE_URL = 'http://localhost:8080';
 
 const VideoPreview = ({
-  videoLayers, // Renamed from layers
-  audioLayers = [], // Added for audio support
+  videoLayers,
+  audioLayers = [],
   currentTime,
   isPlaying,
   canvasDimensions = { width: 1080, height: 1920 },
   onTimeUpdate,
   totalDuration = 0,
-  setIsPlaying, // Optional
+  setIsPlaying,
   containerHeight,
-  videos = [], // Added for video metadata
-  photos = [], // Added for image metadata
+  videos = [],
+  photos = [],
+  transitions = [],
+  fps=25,
 }) => {
   const [loadingVideos, setLoadingVideos] = useState(new Set());
   const [preloadComplete, setPreloadComplete] = useState(false);
@@ -25,6 +28,9 @@ const VideoPreview = ({
   const audioRefs = useRef({});
   const animationFrameRef = useRef(null);
   const lastUpdateTimeRef = useRef(0);
+  const glCanvasRef = useRef(null);
+  const glTextureRefs = useRef({});
+  const fxCanvasRef = useRef(null);
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -33,10 +39,8 @@ const VideoPreview = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   };
 
-  // Linear interpolation for keyframes (matches renderFinalVideo)
   const lerp = (a, b, t) => a + (b - a) * Math.min(Math.max(t, 0), 1);
 
-  // Get keyframe value at time (matches renderFinalVideo)
   const getKeyframeValue = (keyframes, time, defaultValue) => {
     if (!keyframes || keyframes.length === 0) return defaultValue;
     const sorted = [...keyframes].sort((a, b) => a.time - b.time);
@@ -52,6 +56,168 @@ const VideoPreview = ({
     return defaultValue;
   };
 
+  const computeTransitionEffects = (element, localTime) => {
+    const relevantTransitions = transitions.filter(
+      (t) =>
+        (t.toSegmentId === element.id || t.fromSegmentId === element.id) &&
+        element.layer === t.layer &&
+        currentTime >= t.timelineStartTime &&
+        currentTime <= t.timelineStartTime + t.duration
+    );
+
+    let effects = {
+      opacity: null,
+      positionX: 0,
+      positionY: 0,
+      clipPath: null,
+      scale: null,
+      rotate: null,
+    };
+
+    for (const transition of relevantTransitions) {
+      const progress = (currentTime - transition.timelineStartTime) / transition.duration;
+      const parameters = transition.parameters || {};
+
+      if (transition.type === 'Fade') {
+        if (transition.toSegmentId === element.id && transition.fromSegmentId === null) {
+          effects.opacity = lerp(0, 1, progress);
+        } else if (transition.fromSegmentId === element.id) {
+          effects.opacity = lerp(1, 0, progress);
+        }
+      } else if (transition.type === 'Slide') {
+        const direction = parameters.direction || 'right';
+        const canvasWidth = canvasDimensions.width;
+        const canvasHeight = canvasDimensions.height;
+
+        if (transition.toSegmentId === element.id) {
+          if (direction === 'right') {
+            effects.positionX = lerp(canvasWidth, 0, progress);
+          } else if (direction === 'left') {
+            effects.positionX = lerp(-canvasWidth, 0, progress);
+          } else if (direction === 'top') {
+            effects.positionY = lerp(-canvasHeight, 0, progress);
+          } else if (direction === 'bottom') {
+            effects.positionY = lerp(canvasHeight, 0, progress);
+          }
+        } else if (transition.fromSegmentId === element.id) {
+          if (direction === 'right') {
+            effects.positionX = lerp(0, -canvasWidth, progress);
+          } else if (direction === 'left') {
+            effects.positionX = lerp(0, canvasWidth, progress);
+          } else if (direction === 'top') {
+            effects.positionY = lerp(0, canvasHeight, progress);
+          } else if (direction === 'bottom') {
+            effects.positionY = lerp(0, -canvasHeight, progress);
+          }
+        }
+      } else if (transition.type === 'Wipe') {
+        const direction = parameters.direction || 'left';
+        if (transition.toSegmentId === element.id) {
+          if (direction === 'left') {
+            effects.clipPath = `inset(0 calc((1 - ${progress}) * 100%) 0 0)`;
+          } else if (direction === 'right') {
+            effects.clipPath = `inset(0 0 0 calc((1 - ${progress}) * 100%))`;
+          } else if (direction === 'top') {
+            effects.clipPath = `inset(calc((1 - ${progress}) * 100%) 0 0 0)`;
+          } else if (direction === 'bottom') {
+            effects.clipPath = `inset(0 0 calc((1 - ${progress}) * 100%) 0)`;
+          }
+        } else if (transition.fromSegmentId === element.id) {
+          if (direction === 'left') {
+            effects.clipPath = `inset(0 calc(${progress} * 100%) 0 0)`;
+          } else if (direction === 'right') {
+            effects.clipPath = `inset(0 0 0 calc(${progress} * 100%))`;
+          } else if (direction === 'top') {
+            effects.clipPath = `inset(calc(${progress} * 100%) 0 0 0)`;
+          } else if (direction === 'bottom') {
+            effects.clipPath = `inset(0 0 calc(${progress} * 100%) 0)`;
+          }
+        }
+      } else if (transition.type === 'Zoom') {
+        const direction = parameters.direction || 'in';
+        if (transition.toSegmentId === element.id) {
+          effects.scale = direction === 'in' ? lerp(0.1, 1, progress) : lerp(2, 1, progress);
+        } else if (transition.fromSegmentId === element.id) {
+          effects.scale = direction === 'in' ? lerp(1, 2, progress) : lerp(1, 0.1, progress);
+        }
+      } else if (transition.type === 'Rotate') {
+        const direction = parameters.direction || 'clockwise';
+        const angle = direction === 'clockwise' ? 90 : -90;
+        if (transition.toSegmentId === element.id) {
+          effects.rotate = lerp(angle, 0, progress);
+        } else if (transition.fromSegmentId === element.id) {
+          effects.rotate = lerp(0, angle, progress);
+        }
+      } else if (transition.type === 'Push') {
+        const direction = parameters.direction || 'right';
+        const canvasWidth = canvasDimensions.width;
+        const canvasHeight = canvasDimensions.height;
+
+        if (transition.toSegmentId === element.id) {
+          if (direction === 'right') {
+            effects.positionX = lerp(-canvasWidth, 0, progress);
+          } else if (direction === 'left') {
+            effects.positionX = lerp(canvasWidth, 0, progress);
+          } else if (direction === 'top') {
+            effects.positionY = lerp(canvasHeight, 0, progress);
+          } else if (direction === 'bottom') {
+            effects.positionY = lerp(-canvasHeight, 0, progress);
+          }
+        } else if (transition.fromSegmentId === element.id) {
+          if (direction === 'right') {
+            effects.positionX = lerp(0, canvasWidth, progress);
+          } else if (direction === 'left') {
+            effects.positionX = lerp(0, -canvasWidth, progress);
+          } else if (direction === 'top') {
+            effects.positionY = lerp(0, -canvasHeight, progress);
+          } else if (direction === 'bottom') {
+            effects.positionY = lerp(0, canvasHeight, progress);
+          }
+        }
+      }
+    }
+
+    return effects;
+  };
+
+  const computeFilterStyle = (filters, localTime) => {
+    if (!filters || !Array.isArray(filters)) return { css: '', webgl: [] };
+
+    const cssFilterMap = {
+      brightness: (value) => `brightness(${parseFloat(value) + 1})`,
+      contrast: (value) => `contrast(${parseFloat(value)})`,
+      saturation: (value) => `saturate(${parseFloat(value)})`,
+      hue: (value) => `hue-rotate(${parseInt(value)}deg)`,
+      grayscale: (value) => (parseFloat(value) > 0 ? `grayscale(1)` : ''),
+      invert: (value) => (parseFloat(value) > 0 ? `invert(1)` : ''),
+      rotate: () => {
+        console.log('Rotate filter applied via transform, not CSS filter.');
+        return '';
+      },
+      flip: () => {
+        console.log('Flip filter applied via transform, not CSS filter.');
+        return '';
+      },
+    };
+
+    const cssStyles = [];
+
+    filters.forEach((filter) => {
+      const { filterName, filterValue } = filter;
+      if (cssFilterMap[filterName]) {
+        const style = cssFilterMap[filterName](filterValue);
+        if (style) cssStyles.push(style);
+      } else {
+        console.log(`Filter "${filterName}" is not supported in preview and will be ignored.`);
+      }
+    });
+
+    return {
+      css: cssStyles.length > 0 ? cssStyles.join(' ') : '',
+      webgl: [],
+    };
+  };
+
   const videoLayerIds = useMemo(() => {
     return videoLayers
       .flat()
@@ -60,7 +226,25 @@ const VideoPreview = ({
       .join('|');
   }, [videoLayers]);
 
-  // Preload videos
+  useEffect(() => {
+    try {
+      fxCanvasRef.current = fx.canvas();
+      glCanvasRef.current = fxCanvasRef.current;
+      glCanvasRef.current.style.display = 'none';
+      document.body.appendChild(glCanvasRef.current);
+    } catch (e) {
+      console.error('Failed to initialize WebGL:', e);
+    }
+
+    return () => {
+      if (glCanvasRef.current) {
+        glCanvasRef.current.remove();
+        glCanvasRef.current = null;
+        fxCanvasRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const preloadVideos = () => {
       const allVideoItems = videoLayers.flat().filter((item) => item.type === 'video');
@@ -74,6 +258,7 @@ const VideoPreview = ({
           const video = document.createElement('video');
           video.preload = 'auto';
           video.src = videoUrl;
+          video.crossOrigin = 'anonymous';
           video.muted = true;
           video.style.display = 'none';
           document.body.appendChild(video);
@@ -81,6 +266,14 @@ const VideoPreview = ({
 
           return new Promise((resolve) => {
             video.onloadeddata = () => {
+              try {
+                if (fxCanvasRef.current) {
+                  const texture = fxCanvasRef.current.texture(video);
+                  glTextureRefs.current[item.id] = texture;
+                }
+              } catch (e) {
+                console.error(`Failed to create WebGL texture for video ${item.id}:`, e);
+              }
               setLoadingVideos((prev) => {
                 const newSet = new Set(prev);
                 newSet.delete(item.id);
@@ -111,41 +304,46 @@ const VideoPreview = ({
         video.pause();
         document.body.removeChild(video);
       });
+      Object.values(glTextureRefs.current).forEach((texture) => {
+        try {
+          texture.destroy();
+        } catch (e) {
+          console.error('Error destroying texture:', e);
+        }
+      });
       preloadRefs.current = {};
+      glTextureRefs.current = {};
     };
   }, [videoLayerIds]);
 
-  // Preload audio
   useEffect(() => {
-    const preloadAudio = () => {
-      audioLayers.flat().forEach((segment) => {
-        if (segment.type === 'audio' && !audioRefs.current[segment.id]) {
-          const audioUrl = `${API_BASE_URL}/projects/${segment.projectId || '77'}/audio/${encodeURIComponent(segment.fileName)}`;
-          const audio = document.createElement('audio');
-          audio.preload = 'auto';
-          audio.src = audioUrl;
-          audioRefs.current[segment.id] = audio;
-
-          audio.onloadeddata = () => {
-            console.log(`Audio ${segment.fileName} loaded`);
+    const preloadImages = () => {
+      const allImageItems = videoLayers.flat().filter((item) => item.type === 'image');
+      allImageItems.forEach((item) => {
+        if (!glTextureRefs.current[item.id]) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = item.filePath;
+          img.onload = () => {
+            try {
+              if (fxCanvasRef.current) {
+                const texture = fxCanvasRef.current.texture(img);
+                glTextureRefs.current[item.id] = texture;
+              }
+            } catch (e) {
+              console.error(`Failed to create WebGL texture for image ${item.id}:`, e);
+            }
           };
-          audio.onerror = () => {
-            console.error(`Failed to load audio ${segment.fileName}`);
+          img.onerror = () => {
+            console.error(`Failed to preload image ${item.filePath}`);
           };
         }
       });
     };
 
-    preloadAudio();
+    preloadImages();
+  }, [videoLayers]);
 
-    return () => {
-      Object.values(audioRefs.current).forEach((audio) => {
-        audio.pause();
-      });
-    };
-  }, [audioLayers]);
-
-  // Sync video playback
   useEffect(() => {
     const visibleElements = getVisibleElements();
 
@@ -166,6 +364,7 @@ const VideoPreview = ({
 
           if (!videoRef.src) {
             videoRef.src = videoUrl;
+            videoRef.crossOrigin = 'anonymous';
             videoRef.load();
           }
 
@@ -212,57 +411,33 @@ const VideoPreview = ({
     };
   }, [currentTime, isPlaying, videoLayers, preloadComplete]);
 
-  // Sync audio playback
   useEffect(() => {
-    audioLayers.flat().forEach((segment) => {
-      const audio = audioRefs.current[segment.id];
-      if (!audio) return;
+    const frameDuration = 1 / fps; // Duration of one frame in seconds
 
-      const start = segment.startTime || 0;
-      const end = start + segment.duration;
-      const relativeTime = currentTime - start;
-
-      const volume = getKeyframeValue(
-        segment.keyframes && segment.keyframes.volume,
-        relativeTime,
-        segment.volume || 1
-      );
-
-      if (currentTime >= start && currentTime < end) {
-        if (audio.paused && isPlaying) {
-          audio.currentTime = relativeTime + (segment.startTimeWithinAudio || 0);
-          audio.volume = volume;
-          audio.play().catch((e) => console.error('Audio play error:', e));
-        } else if (!audio.paused) {
-          audio.volume = volume;
-          if (Math.abs(audio.currentTime - (relativeTime + (segment.startTimeWithinAudio || 0))) > 0.05) {
-            audio.currentTime = relativeTime + (segment.startTimeWithinAudio || 0);
-          }
-        }
-      } else if (!audio.paused) {
-        audio.pause();
-      }
-    });
-  }, [currentTime, isPlaying, audioLayers]);
-
-  // Update playhead
-  useEffect(() => {
     const updatePlayhead = (timestamp) => {
       if (isPlaying) {
-        const delta = (timestamp - lastUpdateTimeRef.current) / 1000;
-        lastUpdateTimeRef.current = timestamp;
-        const newTime = Math.min(totalDuration, currentTime + delta);
+        if (!lastUpdateTimeRef.current) {
+          lastUpdateTimeRef.current = timestamp;
+        }
+        const deltaMs = timestamp - lastUpdateTimeRef.current;
+        const framesElapsed = Math.floor(deltaMs / (1000 / fps)); // Number of frames based on FPS
+        const deltaTime = framesElapsed * frameDuration; // Time advanced in seconds
+        lastUpdateTimeRef.current = timestamp - (deltaMs % (1000 / fps)); // Align to frame boundary
+
+        const newTime = Math.min(totalDuration, currentTime + deltaTime);
         onTimeUpdate(newTime);
         if (newTime >= totalDuration) {
           if (setIsPlaying) setIsPlaying(false);
           onTimeUpdate(0);
         }
+      } else {
+        lastUpdateTimeRef.current = timestamp; // Reset timestamp when paused
       }
       animationFrameRef.current = requestAnimationFrame(updatePlayhead);
     };
 
     if (isPlaying) {
-      lastUpdateTimeRef.current = performance.now();
+      lastUpdateTimeRef.current = null; // Reset on play
       animationFrameRef.current = requestAnimationFrame(updatePlayhead);
     }
 
@@ -271,9 +446,8 @@ const VideoPreview = ({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isPlaying, currentTime, onTimeUpdate, totalDuration, setIsPlaying]);
+  }, [isPlaying, currentTime, onTimeUpdate, totalDuration, setIsPlaying, fps]);
 
-  // Update canvas size and scale
   useEffect(() => {
     if (previewContainerRef.current) {
       const calculateSize = () => {
@@ -328,12 +502,14 @@ const VideoPreview = ({
             layerIndex,
             localTime: currentTime - itemStartTime,
           });
-          // Debug keyframes
-          console.log(`Visible ${item.type} ${item.id} at t=${currentTime.toFixed(2)}:`, item.keyframes || {});
         }
       });
     });
     return visibleElements.sort((a, b) => a.layerIndex - b.layerIndex);
+  };
+
+  const applyWebGLFilters = (element, sourceElement) => {
+    return sourceElement;
   };
 
   const visibleElements = getVisibleElements();
@@ -353,72 +529,126 @@ const VideoPreview = ({
           }}
         >
           {visibleElements.map((element) => {
-            const relativeTime = currentTime - (element.startTime || 0);
-
-            // Get keyframed properties
             const positionX = getKeyframeValue(
               element.keyframes && element.keyframes.positionX,
-              relativeTime,
+              element.localTime,
               element.positionX || 0
             );
             const positionY = getKeyframeValue(
               element.keyframes && element.keyframes.positionY,
-              relativeTime,
+              element.localTime,
               element.positionY || 0
             );
             const scaleFactor = getKeyframeValue(
               element.keyframes && element.keyframes.scale,
-              relativeTime,
+              element.localTime,
               element.scale || 1
             );
-            const opacity = getKeyframeValue(
+            let opacity = getKeyframeValue(
               element.keyframes && element.keyframes.opacity,
-              relativeTime,
+              element.localTime,
               element.opacity || 1
             );
 
-            // Debug keyframes
-            if (element.keyframes) {
-              console.log(`Element ${element.id} at t=${relativeTime.toFixed(2)}:`, {
-                positionX,
-                positionY,
-                scale: scaleFactor,
-                opacity,
-              });
+            const transitionEffects = computeTransitionEffects(element, element.localTime);
+            if (transitionEffects.opacity !== null) {
+              opacity = transitionEffects.opacity;
+            }
+            const transitionPosX = transitionEffects.positionX;
+            const transitionPosY = transitionEffects.positionY;
+            const clipPath = transitionEffects.clipPath;
+            const transitionScale = transitionEffects.scale;
+            const transitionRotate = transitionEffects.rotate;
+
+            const { css: filterStyle, webgl: webglFilters } = computeFilterStyle(element.filters, element.localTime);
+
+            let transform = '';
+            const rotateFilter = element.filters?.find((f) => f.filterName === 'rotate');
+            const flipFilter = element.filters?.find((f) => f.filterName === 'flip');
+            if (rotateFilter) {
+              transform += `rotate(${parseInt(rotateFilter.filterValue)}deg) `;
+            }
+            if (flipFilter) {
+              if (flipFilter.filterValue === 'horizontal') {
+                transform += 'scaleX(-1) ';
+              } else if (flipFilter.filterValue === 'vertical') {
+                transform += 'scaleY(-1) ';
+              }
+            }
+            if (transitionScale !== null) {
+              transform += `scale(${transitionScale}) `;
+            }
+            if (transitionRotate !== null) {
+              transform += `rotate(${transitionRotate}deg) `;
             }
 
             if (element.type === 'video') {
               const videoWidth = element.width || 1080;
               const videoHeight = element.height || 1920;
 
-              // Don't automatically adjust to fit the canvas
               let displayWidth = videoWidth * scaleFactor;
               let displayHeight = videoHeight * scaleFactor;
 
-              // Position centered on canvas
-              const posX = (canvasDimensions.width - displayWidth) / 2 + positionX;
-              const posY = (canvasDimensions.height - displayHeight) / 2 + positionY;
+              const posX = (canvasDimensions.width - displayWidth) / 2 + positionX + transitionPosX;
+              const posY = (canvasDimensions.height - displayHeight) / 2 + positionY + transitionPosY;
 
               return (
-                <video
-                  key={element.id}
-                  ref={(el) => (videoRefs.current[element.id] = el)}
-                  className="preview-video"
-                  muted={false}
-                  style={{
-                    position: 'absolute',
-                    width: `${displayWidth}px`,
-                    height: `${displayHeight}px`,
-                    left: `${posX}px`,
-                    top: `${posY}px`,
-                    zIndex: element.layerIndex,
-                    opacity,
-                    objectFit: 'contain',
-                  }}
-                  onError={(e) => console.error(`Error loading video ${element.filePath}:`, e)}
-                  onLoadedData={() => console.log(`Video ${element.filePath} loaded`)}
-                  preload="auto"
-                />
+                <React.Fragment key={element.id}>
+                  <video
+                    ref={(el) => (videoRefs.current[element.id] = el)}
+                    className="preview-video"
+                    muted={false}
+                    crossOrigin="anonymous"
+                    style={{
+                      position: 'absolute',
+                      width: `${displayWidth}px`,
+                      height: `${displayHeight}px`,
+                      left: `${posX}px`,
+                      top: `${posY}px`,
+                      zIndex: element.layerIndex,
+                      opacity,
+                      objectFit: 'contain',
+                      filter: filterStyle,
+                      transform: transform.trim(),
+                      clipPath,
+                      display: webglFilters.length > 0 ? 'none' : 'block',
+                    }}
+                    onError={(e) => console.error(`Error loading video ${element.filePath}:`, e)}
+                    onLoadedData={() => console.log(`Video ${element.filePath} loaded`)}
+                    preload="auto"
+                  />
+                  {webglFilters.length > 0 && (
+                    <canvas
+                      style={{
+                        position: 'absolute',
+                        width: `${displayWidth}px`,
+                        height: `${displayHeight}px`,
+                        left: `${posX}px`,
+                        top: `${posY}px`,
+                        zIndex: element.layerIndex,
+                        opacity,
+                        transform: transform.trim(),
+                        clipPath,
+                      }}
+                      ref={(canvas) => {
+                        if (canvas && videoRefs.current[element.id]) {
+                          const filtered = applyWebGLFilters(element, videoRefs.current[element.id]);
+                          if (filtered === videoRefs.current[element.id]) {
+                            canvas.style.display = 'none';
+                            if (videoRefs.current[element.id]) {
+                              videoRefs.current[element.id].style.display = 'block';
+                            }
+                          } else {
+                            canvas.width = displayWidth;
+                            canvas.height = displayHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(filtered, 0, 0, displayWidth, displayHeight);
+                          }
+                        }
+                      }}
+                    />
+                  )}
+                </React.Fragment>
               );
             } else if (element.type === 'image') {
               const imgWidth = element.width || canvasDimensions.width;
@@ -426,45 +656,74 @@ const VideoPreview = ({
               const displayWidth = imgWidth * scaleFactor;
               const displayHeight = imgHeight * scaleFactor;
 
-              // Position matches renderFinalVideo
-              const posX =
-                (canvasDimensions.width - displayWidth) / 2 +
-                positionX -
-                (displayWidth * (scaleFactor - 1)) / 2;
-              const posY =
-                (canvasDimensions.height - displayHeight) / 2 +
-                positionY -
-                (displayHeight * (scaleFactor - 1)) / 2;
+              const posX = (canvasDimensions.width - displayWidth) / 2 + positionX + transitionPosX;
+              const posY = (canvasDimensions.height - displayHeight) / 2 + positionY + transitionPosY;
 
-              // Use photos prop for accurate filePath
               const photo = photos.find((p) => p.fileName === element.fileName) || {
                 filePath: element.filePath,
               };
 
               return (
-                <img
-                  key={element.id}
-                  src={photo.filePath}
-                  alt="Preview"
-                  style={{
-                    position: 'absolute',
-                    width: `${displayWidth}px`,
-                    height: `${displayHeight}px`,
-                    left: `${posX}px`,
-                    top: `${posY}px`,
-                    opacity,
-                    zIndex: element.layerIndex,
-                  }}
-                />
+                <React.Fragment key={element.id}>
+                  <img
+                    src={webglFilters.length > 0 ? null : photo.filePath}
+                    alt="Preview"
+                    crossOrigin="anonymous"
+                    style={{
+                      position: 'absolute',
+                      width: `${displayWidth}px`,
+                      height: `${displayHeight}px`,
+                      left: `${posX}px`,
+                      top: `${posY}px`,
+                      opacity,
+                      zIndex: element.layerIndex,
+                      filter: filterStyle,
+                      transform: transform.trim(),
+                      clipPath,
+                      display: webglFilters.length > 0 ? 'none' : 'block',
+                    }}
+                  />
+                  {webglFilters.length > 0 && (
+                    <canvas
+                      style={{
+                        position: 'absolute',
+                        width: `${displayWidth}px`,
+                        height: `${displayHeight}px`,
+                        left: `${posX}px`,
+                        top: `${posY}px`,
+                        zIndex: element.layerIndex,
+                        opacity,
+                        transform: transform.trim(),
+                        clipPath,
+                      }}
+                      ref={(canvas) => {
+                        if (canvas) {
+                          const img = new Image();
+                          img.crossOrigin = 'anonymous';
+                          img.src = photo.filePath;
+                          img.onload = () => {
+                            const filtered = applyWebGLFilters(element, img);
+                            canvas.width = displayWidth;
+                            canvas.height = displayHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(filtered, 0, 0, displayWidth, displayHeight);
+                          };
+                          img.onerror = () => {
+                            console.error(`Failed to load image for WebGL filtering: ${photo.filePath}`);
+                          };
+                        }
+                      }}
+                    />
+                  )}
+                </React.Fragment>
               );
             } else if (element.type === 'text') {
               const fontSize = (element.fontSize || 24) * scaleFactor;
-              const textWidth = element.text.length * fontSize * 0.6; // Rough estimate
+              const textWidth = element.text.length * fontSize * 0.6;
               const textHeight = fontSize * 1.2;
 
-              // Position matches renderFinalVideo: (w-tw)/2 + positionX
-              const posX = (canvasDimensions.width - textWidth) / 2 + positionX;
-              const posY = (canvasDimensions.height - textHeight) / 2 + positionY;
+              const posX = (canvasDimensions.width - textWidth) / 2 + positionX + transitionPosX;
+              const posY = (canvasDimensions.height - textHeight) / 2 + positionY + transitionPosY;
 
               return (
                 <div
@@ -485,6 +744,9 @@ const VideoPreview = ({
                     whiteSpace: 'pre-wrap',
                     textAlign: 'center',
                     opacity,
+                    filter: filterStyle,
+                    transform: transform.trim(),
+                    clipPath,
                   }}
                 >
                   {element.text}

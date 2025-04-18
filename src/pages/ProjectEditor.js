@@ -48,6 +48,164 @@ const ProjectEditor = () => {
   const [currentTimeInSegment, setCurrentTimeInSegment] = useState(0);
   const [editingProperty, setEditingProperty] = useState(null);
 
+  // Add state variables at the top of ProjectEditor.js (after existing state declarations)
+  const [isTransitionsOpen, setIsTransitionsOpen] = useState(false);
+  const [transitions, setTransitions] = useState([]);
+  const [availableTransitions] = useState([
+    { type: 'Fade', label: 'Fade', icon: '/icons/fade.png' },
+    { type: 'Slide', label: 'Slide', icon: '/icons/slide.png' },
+    { type: 'Wipe', label: 'Wipe', icon: '/icons/wipe.png' },
+    { type: 'Zoom', label: 'Zoom', icon: '/icons/zoom.png' },
+    { type: 'Rotate', label: 'Rotate', icon: '/icons/rotate.png' },
+    { type: 'Push', label: 'Push', icon: '/icons/push.png' },
+  ]);
+  const [selectedTransition, setSelectedTransition] = useState(null); // NEW: State for selected transition
+  const [projectFps, setProjectFps] = useState(25); // Default to 25 as per backend
+
+  // Add function to toggle transitions panel (before render)
+  const toggleTransitionsPanel = () => {
+   setIsTransitionsOpen((prev) => !prev);
+   setIsTransformOpen(false);
+   setIsFiltersOpen(false);
+   setIsTextToolOpen(false);
+  };
+
+  const handleTransitionSelect = (transition) => {
+    setSelectedTransition(transition);
+    setIsTransitionsOpen(true); // Open Transitions panel
+    setIsTransformOpen(false);
+    setIsFiltersOpen(false);
+    setIsTextToolOpen(false);
+  };
+
+  const handleTransitionDurationChange = async (newDuration) => {
+    if (!selectedTransition || !sessionId || !projectId) return;
+    if (newDuration <= 0) {
+      alert('Duration must be positive');
+      return;
+    }
+    try {
+      const token = localStorage.getItem('token');
+      await axios.put(
+        `${API_BASE_URL}/projects/${projectId}/update-transition`,
+        {
+          transitionId: selectedTransition.id,
+          type: selectedTransition.type,
+          duration: newDuration,
+          fromSegmentId: selectedTransition.fromSegmentId,
+          toSegmentId: selectedTransition.toSegmentId,
+          layer: selectedTransition.layer,
+          timelineStartTime: selectedTransition.timelineStartTime,
+          parameters: selectedTransition.parameters || {},
+        },
+        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+      );
+      setTransitions((prev) =>
+        prev.map((t) =>
+          t.id === selectedTransition.id ? { ...t, duration: newDuration } : t
+        )
+      );
+      setSelectedTransition((prev) => ({ ...prev, duration: newDuration }));
+    } catch (error) {
+      console.error('Error updating transition duration:', error);
+      alert('Failed to update transition duration');
+    }
+  };
+
+  const handleTransitionDirectionChange = async (direction) => {
+    if (!selectedTransition || !sessionId || !projectId) return;
+    try {
+      const token = localStorage.getItem('token');
+      const updatedParameters = { ...selectedTransition.parameters, direction };
+      await axios.put(
+        `${API_BASE_URL}/projects/${projectId}/update-transition`,
+        {
+          transitionId: selectedTransition.id,
+          type: selectedTransition.type,
+          duration: selectedTransition.duration,
+          fromSegmentId: selectedTransition.fromSegmentId,
+          toSegmentId: selectedTransition.toSegmentId,
+          layer: selectedTransition.layer,
+          timelineStartTime: selectedTransition.timelineStartTime,
+          parameters: updatedParameters,
+        },
+        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+      );
+      setTransitions((prev) =>
+        prev.map((t) =>
+          t.id === selectedTransition.id ? { ...t, parameters: updatedParameters } : t
+        )
+      );
+      setSelectedTransition((prev) => ({ ...prev, parameters: updatedParameters }));
+    } catch (error) {
+      console.error('Error updating transition direction:', error);
+      alert('Failed to update transition direction');
+    }
+  };
+
+  const handleTransitionDelete = async () => {
+    if (!selectedTransition || !sessionId || !projectId) return;
+    try {
+      const token = localStorage.getItem('token');
+      await axios.delete(
+        `${API_BASE_URL}/projects/${projectId}/remove-transition`,
+        {
+          params: { sessionId, transitionId: selectedTransition.id },
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      setTransitions((prev) => prev.filter((t) => t.id !== selectedTransition.id));
+      setSelectedTransition(null);
+    } catch (error) {
+      console.error('Error deleting transition:', error);
+      alert('Failed to delete transition');
+    }
+  };
+
+  const fetchTransitions = async () => {
+    if (!sessionId || !projectId || !localStorage.getItem('token')) {
+      console.warn('Cannot fetch transitions: Missing sessionId, projectId, or token');
+      setTransitions([]);
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API_BASE_URL}/projects/${projectId}/transitions`, {
+        params: { sessionId },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTransitions(response.data || []);
+    } catch (error) {
+      console.error('Error fetching transitions:', error);
+      if (error.response?.status === 403) {
+        // Attempt to refresh session and retry
+        try {
+          const token = localStorage.getItem('token');
+          const sessionResponse = await axios.post(
+            `${API_BASE_URL}/projects/${projectId}/session`,
+            {},
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          setSessionId(sessionResponse.data);
+          // Retry fetching transitions with new sessionId
+          const retryResponse = await axios.get(`${API_BASE_URL}/projects/${projectId}/transitions`, {
+            params: { sessionId: sessionResponse.data },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setTransitions(retryResponse.data || []);
+        } catch (retryError) {
+          console.error('Error retrying transitions fetch:', retryError);
+          setTransitions([]);
+        }
+      } else if (error.response?.status === 401) {
+        navigate('/login');
+      } else {
+        setTransitions([]);
+      }
+    }
+  };
+
   let timelineSetPlayhead = null;
 
   const MIN_TIME_SCALE = 0.1;
@@ -238,6 +396,7 @@ const ProjectEditor = () => {
         await fetchVideos();
         await fetchAudios();
         await fetchPhotos();
+        await fetchTransitions();
         const token = localStorage.getItem('token');
         const sessionResponse = await axios.post(
           `${API_BASE_URL}/projects/${projectId}/session`,
@@ -252,6 +411,9 @@ const ProjectEditor = () => {
         const project = projectResponse.data;
         if (project.width && project.height) {
           setCanvasDimensions({ width: project.width, height: project.height });
+        }
+        if (project.fps) {
+          setProjectFps(project.fps); // Set the FPS from backend
         }
       } catch (error) {
         console.error('Error initializing project:', error);
@@ -378,6 +540,63 @@ const ProjectEditor = () => {
       setPhotos([]);
     }
   };
+
+  // Add function to handle transition drag start (before render)
+  const handleTransitionDragStart = (e, transition) => {
+   const dragData = {
+   type: 'transition',
+   transition: {
+   type: transition.type,
+   duration: 1, // Default duration
+   label: transition.label,
+   },
+   };
+   e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+   e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  // Add function to handle transition drop (before render)
+  const handleTransitionDrop = async (fromSegmentId, toSegmentId, layer, timelinePosition, transitionType) => {
+    if (!sessionId || !projectId || !transitionType) {
+      console.error('Missing required parameters for transition drop:', { sessionId, projectId, transitionType });
+      return;
+    }
+    try {
+      const token = localStorage.getItem('token');
+      let parameters = {};
+      // Set default direction based on transition type
+      if (transitionType === 'Zoom') {
+        parameters.direction = 'in';
+      } else if (transitionType === 'Rotate') {
+        parameters.direction = 'clockwise';
+      } else if (['Slide', 'Push'].includes(transitionType)) {
+        parameters.direction = 'right';
+      } else if (transitionType === 'Wipe') {
+        parameters.direction = 'left';
+      }
+      const payload = {
+        type: transitionType,
+        duration: 1,
+        fromSegmentId: fromSegmentId || null,
+        toSegmentId: toSegmentId,
+        layer: layer,
+        timelineStartTime: timelinePosition,
+        parameters,
+      };
+      const response = await axios.post(
+        `${API_BASE_URL}/projects/${projectId}/add-transition`,
+        payload,
+        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+      );
+      const newTransition = response.data;
+      setTransitions((prev) => [...prev, newTransition]);
+      await fetchTransitions();
+    } catch (error) {
+      console.error('Error adding transition:', error.response?.data || error.message);
+      alert('Failed to add transition. Please try again.');
+    }
+  };
+
 
   // New function to preload media
   const preloadMedia = () => {
@@ -807,10 +1026,33 @@ const ProjectEditor = () => {
           return;
       }
 
+      // Delete the segment
       await axios.delete(endpoint, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
+      // Delete associated transitions
+      const transitionsToDelete = transitions.filter(
+        (transition) =>
+          transition.fromSegmentId === selectedSegment.id ||
+          transition.toSegmentId === selectedSegment.id
+      );
+
+      for (const transition of transitionsToDelete) {
+        try {
+          await axios.delete(
+            `${API_BASE_URL}/projects/${projectId}/remove-transition`,
+            {
+              params: { sessionId, transitionId: transition.id },
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+        } catch (error) {
+          console.error(`Error deleting transition ${transition.id}:`, error);
+        }
+      }
+
+      // Update local state
       if (selectedSegment.type === 'audio') {
         setAudioLayers((prevLayers) => {
           const newLayers = [...prevLayers];
@@ -830,6 +1072,16 @@ const ProjectEditor = () => {
         });
       }
 
+      // Update transitions state
+      setTransitions((prevTransitions) =>
+        prevTransitions.filter(
+          (transition) =>
+            transition.fromSegmentId !== selectedSegment.id &&
+            transition.toSegmentId !== selectedSegment.id
+        )
+      );
+
+      // Update total duration
       const allLayers = [...videoLayers, ...audioLayers];
       let maxEndTime = 0;
       allLayers.forEach((layer) => {
@@ -840,6 +1092,7 @@ const ProjectEditor = () => {
       });
       setTotalDuration(maxEndTime);
 
+      // Reset selected segment and panels
       setSelectedSegment(null);
       setIsTextToolOpen(false);
       setIsTransformOpen(false);
@@ -852,18 +1105,19 @@ const ProjectEditor = () => {
   };
 
   useEffect(() => {
+    const frameDuration = 1 / projectFps; // Duration of one frame in seconds
     const handleKeyDown = (e) => {
       if (!isPlaying) {
         if (e.key === 'ArrowLeft') {
-          handleTimeUpdate(Math.max(0, currentTime - 1 / 30), true);
+          handleTimeUpdate(Math.max(0, currentTime - frameDuration), true);
         } else if (e.key === 'ArrowRight') {
-          handleTimeUpdate(Math.min(totalDuration, currentTime + 1 / 30), true);
+          handleTimeUpdate(Math.min(totalDuration, currentTime + frameDuration), true);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, totalDuration, currentTime, selectedSegment]); // Added selectedSegment dependency
+  }, [isPlaying, totalDuration, currentTime, selectedSegment, projectFps]); // Added projectFps dependency
 
   useEffect(() => {
     if (isPlaying && currentTime >= totalDuration) {
@@ -1052,6 +1306,7 @@ const ProjectEditor = () => {
           sharpen: 0,
         });
       }
+      await fetchTransitions();
     } else {
       setTempSegmentValues({});
       setAppliedFilters([]);
@@ -1134,9 +1389,7 @@ const ProjectEditor = () => {
     if (!selectedSegment) return;
     const time = currentTimeInSegment;
 
-//    const segmentData = await fetchKeyframes(selectedSegment.id, selectedSegment.type);
     const currentKeyframes = keyframes || {};
-
     const updatedPropertyKeyframes = (currentKeyframes[property] || []).filter(
       (kf) => !areTimesEqual(kf.time, time)
     );
@@ -1150,34 +1403,54 @@ const ProjectEditor = () => {
 
     setKeyframes(updatedKeyframes);
 
-    // [Change] Update the appropriate layers (video or audio) with new keyframes to ensure UI re-renders
-      if (selectedSegment.type === 'audio') {
-        setAudioLayers((prevLayers) => {
-          const newLayers = [...prevLayers];
-          const layerIndex = Math.abs(selectedSegment.layer) - 1;
-          newLayers[layerIndex] = newLayers[layerIndex].map((item) =>
-            item.id === selectedSegment.id ? { ...item, keyframes: updatedKeyframes } : item
-          );
-          return newLayers;
-        });
-      } else {
-        setVideoLayers((prevLayers) => {
-          const newLayers = [...prevLayers];
-          newLayers[selectedSegment.layer] = newLayers[selectedSegment.layer].map((item) =>
-            item.id === selectedSegment.id ? { ...item, keyframes: updatedKeyframes } : item
-          );
-          return newLayers;
-        });
-      }
+    // Update the appropriate layers with new keyframes
+    if (selectedSegment.type === 'audio') {
+      setAudioLayers((prevLayers) => {
+        const newLayers = [...prevLayers];
+        const layerIndex = Math.abs(selectedSegment.layer) - 1;
+        newLayers[layerIndex] = newLayers[layerIndex].map((item) =>
+          item.id === selectedSegment.id ? { ...item, keyframes: updatedKeyframes } : item
+        );
+        return newLayers;
+      });
+    } else {
+      setVideoLayers((prevLayers) => {
+        const newLayers = [...prevLayers];
+        newLayers[selectedSegment.layer] = newLayers[selectedSegment.layer].map((item) =>
+          item.id === selectedSegment.id ? { ...item, keyframes: updatedKeyframes } : item
+        );
+        return newLayers;
+      });
+    }
 
-      // [Change] Update tempSegmentValues to reflect the new keyframe value at the current time
-      setTempSegmentValues((prev) => ({
-        ...prev,
-        [property]: value,
-      }));
+    // Update tempSegmentValues to reflect the new keyframe value
+    setTempSegmentValues((prev) => ({
+      ...prev,
+      [property]: value,
+    }));
 
+    // Send keyframe to backend
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post(
+        `${API_BASE_URL}/projects/${projectId}/add-keyframe`,
+        {
+          segmentId: selectedSegment.id,
+          segmentType: selectedSegment.type,
+          property,
+          time,
+          value,
+          interpolationType: 'linear',
+        },
+        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      // Save segment changes to persist the updated keyframes
       await saveSegmentChanges(updatedKeyframes);
-    };
+    } catch (error) {
+      console.error('Error adding keyframe:', error);
+    }
+  };
 
   const removeKeyframe = async (property, time) => {
     if (!selectedSegment) return;
@@ -1271,7 +1544,7 @@ const ProjectEditor = () => {
                   ? undefined
                   : tempSegmentValues.positionY,
               scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? undefined : tempSegmentValues.scale,
-              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity, // Added opacity
+              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity,
               keyframes: updatedKeyframes,
               filters: appliedFilters,
             },
@@ -1292,7 +1565,10 @@ const ProjectEditor = () => {
                   ? undefined
                   : tempSegmentValues.positionY,
               scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? undefined : tempSegmentValues.scale,
-              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity, // Added opacity
+              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity,
+              layer: selectedSegment.layer,
+              timelineStartTime: selectedSegment.startTime,
+              timelineEndTime: selectedSegment.startTime + selectedSegment.duration,
               keyframes: updatedKeyframes,
               filters: appliedFilters,
             },
@@ -1320,7 +1596,7 @@ const ProjectEditor = () => {
                 updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0
                   ? undefined
                   : tempSegmentValues.positionY,
-              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity, // Added opacity
+              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity,
               keyframes: updatedKeyframes,
             },
             { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
@@ -1341,7 +1617,9 @@ const ProjectEditor = () => {
         default:
           break;
       }
-//      await fetchKeyframes(selectedSegment.id, selectedSegment.type);
+      // Refresh keyframes after saving
+      await fetchKeyframes(selectedSegment.id, selectedSegment.type);
+      await fetchTransitions();
       preloadMedia();
     } catch (error) {
       console.error(`Error saving ${selectedSegment.type} segment changes:`, error);
@@ -1588,7 +1866,7 @@ const ProjectEditor = () => {
                       type="range"
                       min="-1"
                       max="1"
-                      step="0.1"
+                      step="0.01"
                       value={filterParams.brightness !== undefined ? filterParams.brightness : 0}
                       onChange={(e) => updateFilterSetting('brightness', parseFloat(e.target.value))}
                     />
@@ -1596,7 +1874,7 @@ const ProjectEditor = () => {
                       type="number"
                       value={filterParams.brightness !== undefined ? filterParams.brightness : 0}
                       onChange={(e) => updateFilterSetting('brightness', parseFloat(e.target.value))}
-                      step="0.1"
+                      step="0.01"
                       min="-1"
                       max="1"
                       style={{ width: '60px', marginLeft: '10px' }}
@@ -1610,7 +1888,7 @@ const ProjectEditor = () => {
                       type="range"
                       min="0"
                       max="2"
-                      step="0.1"
+                      step="0.01"
                       value={filterParams.contrast !== undefined ? filterParams.contrast : 1}
                       onChange={(e) => updateFilterSetting('contrast', parseFloat(e.target.value))}
                     />
@@ -1618,7 +1896,7 @@ const ProjectEditor = () => {
                       type="number"
                       value={filterParams.contrast !== undefined ? filterParams.contrast : 1}
                       onChange={(e) => updateFilterSetting('contrast', parseFloat(e.target.value))}
-                      step="0.1"
+                      step="0.01"
                       min="0"
                       max="2"
                       style={{ width: '60px', marginLeft: '10px' }}
@@ -1632,7 +1910,7 @@ const ProjectEditor = () => {
                       type="range"
                       min="0"
                       max="2"
-                      step="0.1"
+                      step="0.01"
                       value={filterParams.saturation !== undefined ? filterParams.saturation : 1}
                       onChange={(e) => updateFilterSetting('saturation', parseFloat(e.target.value))}
                     />
@@ -1640,7 +1918,7 @@ const ProjectEditor = () => {
                       type="number"
                       value={filterParams.saturation !== undefined ? filterParams.saturation : 1}
                       onChange={(e) => updateFilterSetting('saturation', parseFloat(e.target.value))}
-                      step="0.1"
+                      step="0.01"
                       min="0"
                       max="2"
                       style={{ width: '60px', marginLeft: '10px' }}
@@ -1669,406 +1947,28 @@ const ProjectEditor = () => {
                     />
                   </div>
                 </div>
-                {/* Additional Color Adjustments from Backend */}
-                <div className="control-group">
-                  <label>Gamma (0.1 to 10)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="10"
-                      step="0.1"
-                      value={filterParams.gamma !== undefined ? filterParams.gamma : 1}
-                      onChange={(e) => updateFilterSetting('gamma', parseFloat(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.gamma !== undefined ? filterParams.gamma : 1}
-                      onChange={(e) => updateFilterSetting('gamma', parseFloat(e.target.value))}
-                      step="0.1"
-                      min="0.1"
-                      max="10"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                {/* Color Balance (R,G,B adjustments) */}
-                <div className="control-group">
-                  <label>Color Balance (R: -1 to 1)</label>
-                  <input
-                    type="range"
-                    min="-1"
-                    max="1"
-                    step="0.1"
-                    value={filterParams.colorbalance_r !== undefined ? filterParams.colorbalance_r : 0}
-                    onChange={(e) => {
-                      const r = parseFloat(e.target.value);
-                      const g = filterParams.colorbalance_g || 0;
-                      const b = filterParams.colorbalance_b || 0;
-                      updateFilterSetting('colorbalance', `${r},${g},${b}`);
-                      setFilterParams((prev) => ({ ...prev, colorbalance_r: r }));
-                    }}
-                  />
-                </div>
-                <div className="control-group">
-                  <label>Color Balance (G: -1 to 1)</label>
-                  <input
-                    type="range"
-                    min="-1"
-                    max="1"
-                    step="0.1"
-                    value={filterParams.colorbalance_g !== undefined ? filterParams.colorbalance_g : 0}
-                    onChange={(e) => {
-                      const r = filterParams.colorbalance_r || 0;
-                      const g = parseFloat(e.target.value);
-                      const b = filterParams.colorbalance_b || 0;
-                      updateFilterSetting('colorbalance', `${r},${g},${b}`);
-                      setFilterParams((prev) => ({ ...prev, colorbalance_g: g }));
-                    }}
-                  />
-                </div>
-                <div className="control-group">
-                  <label>Color Balance (B: -1 to 1)</label>
-                  <input
-                    type="range"
-                    min="-1"
-                    max="1"
-                    step="0.1"
-                    value={filterParams.colorbalance_b !== undefined ? filterParams.colorbalance_b : 0}
-                    onChange={(e) => {
-                      const r = filterParams.colorbalance_r || 0;
-                      const g = filterParams.colorbalance_g || 0;
-                      const b = parseFloat(e.target.value);
-                      updateFilterSetting('colorbalance', `${r},${g},${b}`);
-                      setFilterParams((prev) => ({ ...prev, colorbalance_b: b }));
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Blur and Sharpen */}
-              <div className="filter-group">
-                <h4>Blur and Sharpen</h4>
-                <div className="control-group">
-                  <label>Blur (0 to 10)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0"
-                      max="10"
-                      step="1"
-                      value={filterParams.blur !== undefined ? filterParams.blur : 0}
-                      onChange={(e) => updateFilterSetting('blur', parseInt(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.blur !== undefined ? filterParams.blur : 0}
-                      onChange={(e) => updateFilterSetting('blur', parseInt(e.target.value))}
-                      step="1"
-                      min="0"
-                      max="10"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Sharpen (-2 to 2)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="-2"
-                      max="2"
-                      step="0.1"
-                      value={filterParams.sharpen !== undefined ? filterParams.sharpen : 0}
-                      onChange={(e) => updateFilterSetting('sharpen', parseFloat(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.sharpen !== undefined ? filterParams.sharpen : 0}
-                      onChange={(e) => updateFilterSetting('sharpen', parseFloat(e.target.value))}
-                      step="0.1"
-                      min="-2"
-                      max="2"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                {/* Edge Detection */}
-                <div className="control-group">
-                  <label>Edge (0 to 1)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={filterParams.edge !== undefined ? filterParams.edge : 0}
-                      onChange={(e) => updateFilterSetting('edge', parseFloat(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.edge !== undefined ? filterParams.edge : 0}
-                      onChange={(e) => updateFilterSetting('edge', parseFloat(e.target.value))}
-                      step="0.1"
-                      min="0"
-                      max="1"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
               </div>
 
               {/* Stylization Filters */}
               <div className="filter-group">
                 <h4>Stylization</h4>
-                {/* Updated Grayscale with Toggle and Intensity Slider */}
                 <div className="control-group">
                   <label>Grayscale</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <input
                       type="checkbox"
                       checked={!!filterParams.grayscale}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateFilterSetting('grayscale', filterParams.grayscale_intensity || '1');
-                        } else {
-                          updateFilterSetting('grayscale', '');
-                        }
-                      }}
-                    />
-                    <div className="slider-container" style={{ flex: 1 }}>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={filterParams.grayscale_intensity !== undefined ? filterParams.grayscale_intensity : 1}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          setFilterParams((prev) => ({ ...prev, grayscale_intensity: value }));
-                          if (filterParams.grayscale) {
-                            updateFilterSetting('grayscale', value > 0 ? '1' : '');
-                          }
-                        }}
-                        disabled={!filterParams.grayscale}
-                      />
-                    </div>
-                  </div>
-                </div>
-                {/* Updated Sepia with Toggle and Intensity Slider */}
-                <div className="control-group">
-                  <label>Sepia</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input
-                      type="checkbox"
-                      checked={!!filterParams.sepia}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateFilterSetting('sepia', filterParams.sepia_intensity || '1');
-                        } else {
-                          updateFilterSetting('sepia', '');
-                        }
-                      }}
-                    />
-                    <div className="slider-container" style={{ flex: 1 }}>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={filterParams.sepia_intensity !== undefined ? filterParams.sepia_intensity : 1}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          setFilterParams((prev) => ({ ...prev, sepia_intensity: value }));
-                          if (filterParams.sepia) {
-                            updateFilterSetting('sepia', value > 0 ? '1' : '');
-                          }
-                        }}
-                        disabled={!filterParams.sepia}
-                      />
-                    </div>
-                  </div>
-                </div>
-                {/* Updated Vintage with Toggle and Intensity Slider */}
-                <div className="control-group">
-                  <label>Vintage</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input
-                      type="checkbox"
-                      checked={!!filterParams.vintage}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateFilterSetting('vintage', filterParams.vintage_intensity || '1');
-                        } else {
-                          updateFilterSetting('vintage', '');
-                        }
-                      }}
-                    />
-                    <div className="slider-container" style={{ flex: 1 }}>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={filterParams.vintage_intensity !== undefined ? filterParams.vintage_intensity : 1}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          setFilterParams((prev) => ({ ...prev, vintage_intensity: value }));
-                          if (filterParams.vintage) {
-                            updateFilterSetting('vintage', value > 0 ? '1' : '');
-                          }
-                        }}
-                        disabled={!filterParams.vintage}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Posterize (2 to 32 levels)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="2"
-                      max="32"
-                      step="1"
-                      value={filterParams.posterize !== undefined ? filterParams.posterize : 8}
-                      onChange={(e) => updateFilterSetting('posterize', parseInt(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.posterize !== undefined ? filterParams.posterize : 8}
-                      onChange={(e) => updateFilterSetting('posterize', parseInt(e.target.value))}
-                      step="1"
-                      min="2"
-                      max="32"
-                      style={{ width: '60px', marginLeft: '10px' }}
+                      onChange={(e) => updateFilterSetting('grayscale', e.target.checked ? '1' : '')}
                     />
                   </div>
                 </div>
-                <div className="control-group">
-                  <label>Solarize (0 to 1)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={filterParams.solarize !== undefined ? filterParams.solarize : 0.5}
-                      onChange={(e) => updateFilterSetting('solarize', parseFloat(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.solarize !== undefined ? filterParams.solarize : 0.5}
-                      onChange={(e) => updateFilterSetting('solarize', parseFloat(e.target.value))}
-                      step="0.1"
-                      min="0"
-                      max="1"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                {/* Updated Invert with Toggle and Intensity Slider */}
                 <div className="control-group">
                   <label>Invert</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <input
                       type="checkbox"
                       checked={!!filterParams.invert}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateFilterSetting('invert', filterParams.invert_intensity || '1');
-                        } else {
-                          updateFilterSetting('invert', '');
-                        }
-                      }}
-                    />
-                    <div className="slider-container" style={{ flex: 1 }}>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={filterParams.invert_intensity !== undefined ? filterParams.invert_intensity : 1}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          setFilterParams((prev) => ({ ...prev, invert_intensity: value }));
-                          if (filterParams.invert) {
-                            updateFilterSetting('invert', value > 0 ? '1' : '');
-                          }
-                        }}
-                        disabled={!filterParams.invert}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Distortion and Noise */}
-              <div className="filter-group">
-                <h4>Distortion and Noise</h4>
-                <div className="control-group">
-                  <label>Noise (0 to 100)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={filterParams.noise !== undefined ? filterParams.noise : 0}
-                      onChange={(e) => updateFilterSetting('noise', parseInt(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.noise !== undefined ? filterParams.noise : 0}
-                      onChange={(e) => updateFilterSetting('noise', parseInt(e.target.value))}
-                      step="1"
-                      min="0"
-                      max="100"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Vignette (1 to 10)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="1"
-                      max="10"
-                      step="1"
-                      value={filterParams.vignette !== undefined ? filterParams.vignette : 2}
-                      onChange={(e) => updateFilterSetting('vignette', parseInt(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.vignette !== undefined ? filterParams.vignette : 2}
-                      onChange={(e) => updateFilterSetting('vignette', parseInt(e.target.value))}
-                      step="1"
-                      min="1"
-                      max="10"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Pixelize (2 to 32)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="2"
-                      max="32"
-                      step="1"
-                      value={filterParams.pixelize !== undefined ? filterParams.pixelize : 8}
-                      onChange={(e) => updateFilterSetting('pixelize', parseInt(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.pixelize !== undefined ? filterParams.pixelize : 8}
-                      onChange={(e) => updateFilterSetting('pixelize', parseInt(e.target.value))}
-                      step="1"
-                      min="2"
-                      max="32"
-                      style={{ width: '60px', marginLeft: '10px' }}
+                      onChange={(e) => updateFilterSetting('invert', e.target.checked ? '1' : '')}
                     />
                   </div>
                 </div>
@@ -2109,120 +2009,6 @@ const ProjectEditor = () => {
                     <option value="horizontal">Horizontal</option>
                     <option value="vertical">Vertical</option>
                   </select>
-                </div>
-                <div className="control-group">
-                  <label>Opacity (0 to 1)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={filterParams.opacity !== undefined ? filterParams.opacity : 1}
-                      onChange={(e) => updateFilterSetting('opacity', parseFloat(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.opacity !== undefined ? filterParams.opacity : 1}
-                      onChange={(e) => updateFilterSetting('opacity', parseFloat(e.target.value))}
-                      step="0.01"
-                      min="0"
-                      max="1"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Special Effects */}
-              <div className="filter-group">
-                <h4>Special Effects</h4>
-                {/* Updated Emboss with Toggle and Intensity Slider */}
-                <div className="control-group">
-                  <label>Emboss</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input
-                      type="checkbox"
-                      checked={!!filterParams.emboss}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateFilterSetting('emboss', filterParams.emboss_intensity || '1');
-                        } else {
-                          updateFilterSetting('emboss', '');
-                        }
-                      }}
-                    />
-                    <div className="slider-container" style={{ flex: 1 }}>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={filterParams.emboss_intensity !== undefined ? filterParams.emboss_intensity : 1}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          setFilterParams((prev) => ({ ...prev, emboss_intensity: value }));
-                          if (filterParams.emboss) {
-                            updateFilterSetting('emboss', value > 0 ? '1' : '');
-                          }
-                        }}
-                        disabled={!filterParams.emboss}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Glow (0 to 10)</label>
-                  <div className="slider-container">
-                    <input
-                      type="range"
-                      min="0"
-                      max="10"
-                      step="1"
-                      value={filterParams.glow !== undefined ? filterParams.glow : 2}
-                      onChange={(e) => updateFilterSetting('glow', parseInt(e.target.value))}
-                    />
-                    <input
-                      type="number"
-                      value={filterParams.glow !== undefined ? filterParams.glow : 2}
-                      onChange={(e) => updateFilterSetting('glow', parseInt(e.target.value))}
-                      step="1"
-                      min="0"
-                      max="10"
-                      style={{ width: '60px', marginLeft: '10px' }}
-                    />
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Overlay</label>
-                  <select
-                    value={filterParams.overlay_color || 'red'}
-                    onChange={(e) => {
-                      const color = e.target.value;
-                      const opacity = filterParams.overlay_opacity || 0.5;
-                      updateFilterSetting('overlay', `${color}@${opacity}`);
-                      setFilterParams((prev) => ({ ...prev, overlay_color: color }));
-                    }}
-                  >
-                    <option value="red">Red</option>
-                    <option value="green">Green</option>
-                    <option value="blue">Blue</option>
-                    <option value="yellow">Yellow</option>
-                  </select>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    value={filterParams.overlay_opacity !== undefined ? filterParams.overlay_opacity : 0.5}
-                    onChange={(e) => {
-                      const opacity = parseFloat(e.target.value);
-                      const color = filterParams.overlay_color || 'red';
-                      updateFilterSetting('overlay', `${color}@${opacity}`);
-                      setFilterParams((prev) => ({ ...prev, overlay_opacity: opacity }));
-                    }}
-                    style={{ marginLeft: '10px' }}
-                  />
                 </div>
               </div>
             </>
@@ -2406,6 +2192,96 @@ const ProjectEditor = () => {
     );
   };
 
+    const renderTransitionsPanel = () => {
+      const getDirectionOptions = (transitionType) => {
+        switch (transitionType) {
+          case 'Zoom':
+            return [
+              { value: 'in', label: 'Zoom In' },
+              { value: 'out', label: 'Zoom Out' },
+            ];
+          case 'Rotate':
+            return [
+              { value: 'clockwise', label: 'Clockwise' },
+              { value: 'counterclockwise', label: 'Counterclockwise' },
+            ];
+          case 'Slide':
+          case 'Push':
+            return [
+              { value: 'right', label: 'Right' },
+              { value: 'left', label: 'Left' },
+              { value: 'top', label: 'Top' },
+              { value: 'bottom', label: 'Bottom' },
+            ];
+          case 'Wipe':
+            return [
+              { value: 'left', label: 'Left' },
+              { value: 'right', label: 'Right' },
+              { value: 'top', label: 'Top' },
+              { value: 'bottom', label: 'Bottom' },
+            ];
+          default:
+            return [];
+        }
+      };
+
+      return (
+        <div className="transitions-panel">
+          <h3>Transitions</h3>
+          <div className="transitions-list">
+            {availableTransitions.map((transition) => (
+              <div
+                key={transition.type}
+                className="transition-item"
+                draggable
+                onDragStart={(e) => handleTransitionDragStart(e, transition)}
+              >
+                <img src={transition.icon} alt={transition.label} className="transition-icon" />
+                <span>{transition.label}</span>
+              </div>
+            ))}
+          </div>
+          {selectedTransition && (
+            <div className="selected-transition-details">
+              <h4>Selected Transition</h4>
+              <div className="control-group">
+                <label>Type</label>
+                <span>{selectedTransition.type}</span>
+              </div>
+              <div className="control-group">
+                <label>Duration (s)</label>
+                <input
+                  type="number"
+                  value={selectedTransition.duration}
+                  onChange={(e) => handleTransitionDurationChange(parseFloat(e.target.value))}
+                  min="0.1"
+                  step="0.1"
+                />
+              </div>
+              {getDirectionOptions(selectedTransition.type).length > 0 && (
+                <div className="control-group">
+                  <label>Direction</label>
+                  <select
+                    value={selectedTransition.parameters?.direction || getDirectionOptions(selectedTransition.type)[0].value}
+                    onChange={(e) => handleTransitionDirectionChange(e.target.value)}
+                  >
+                    {getDirectionOptions(selectedTransition.type).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button className="delete-button" onClick={handleTransitionDelete}>
+                🗑️ Delete Transition
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    };
+
   return (
     <div className="project-editor">
       <aside className={`media-panel ${isMediaPanelOpen ? 'open' : 'closed'}`}>
@@ -2544,6 +2420,8 @@ const ProjectEditor = () => {
               containerHeight={previewHeight}
               videos={videos}
               photos={photos}
+              transitions={transitions}
+              fps={projectFps}
             />
           </div>
           <div className={`resize-preview-section ${isDraggingHandle ? 'dragging' : ''}`} onMouseDown={handleMouseDown}></div>
@@ -2586,6 +2464,10 @@ const ProjectEditor = () => {
                 setTimeScale={setTimeScale}
                 setPlayheadFromParent={(setPlayhead) => (timelineSetPlayhead = setPlayhead)}
                 onDeleteSegment={handleDeleteSegment} // Pass delete handler to TimelineComponent
+                transitions={transitions} // Add this
+                setTransitions={setTransitions} // Add this
+                handleTransitionDrop={handleTransitionDrop} // Add this
+                onTransitionSelect={handleTransitionSelect} // NEW: Pass transition select handler
               />
             ) : (
               <div className="loading-message">Loading timeline...</div>
@@ -2628,6 +2510,9 @@ const ProjectEditor = () => {
                 disabled={!selectedSegment || selectedSegment.type !== 'text'}
               >
                 Text
+              </button>
+              <button className={`tool-button ${isTransitionsOpen ? 'active' : ''}`} onClick={toggleTransitionsPanel}>
+              Transitions
               </button>
             </div>
             {selectedSegment && isTransformOpen && (
@@ -2703,6 +2588,7 @@ const ProjectEditor = () => {
                 <button onClick={handleSaveTextSegment}>Save Text</button>
               </div>
             )}
+            {isTransitionsOpen && renderTransitionsPanel()}
           </div>
         )}
       </aside>
