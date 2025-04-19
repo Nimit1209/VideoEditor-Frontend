@@ -334,13 +334,13 @@ const AudioSegmentHandler = ({
       console.log('Split time too close to start or end: splitTime=', splitTime);
       return;
     }
-  
+
     try {
       const token = localStorage.getItem('token');
       if (!token) {
         throw new Error('Authentication token missing');
       }
-  
+
       // Step 1: Fetch project data
       let projectData, extractedAudios;
       try {
@@ -359,7 +359,7 @@ const AudioSegmentHandler = ({
         console.error('Error fetching project:', error.response?.data || error.message);
         throw new Error('Failed to fetch project data');
       }
-  
+
       // Step 2: Find the exact audio entry
       const basename = item.fileName.split('/').pop();
       const audioEntry = extractedAudios.find(a =>
@@ -374,13 +374,13 @@ const AudioSegmentHandler = ({
       }
       const audioFileName = audioEntry.audioFileName; // Use the exact filename from extractedAudioJson
       console.log('Using audioFileName:', audioFileName);
-  
+
       // Step 3: Calculate durations
       const firstPartDuration = splitTime;
       const secondPartDuration = item.duration - splitTime;
       const startWithinAudio = item.startTimeWithinAudio || 0;
       console.log('firstPartDuration=', firstPartDuration, 'secondPartDuration=', secondPartDuration, 'startWithinAudio=', startWithinAudio);
-  
+
       // Step 4: Prepare segment data
       const firstPart = {
         ...item,
@@ -402,7 +402,7 @@ const AudioSegmentHandler = ({
       };
       console.log('firstPart=', firstPart);
       console.log('secondPart=', secondPart);
-  
+
       // Step 5: Update first segment
       console.log('Calling updateAudioSegment for firstPart:', firstPart.id);
       await updateAudioSegment(
@@ -414,7 +414,7 @@ const AudioSegmentHandler = ({
         firstPart.endTimeWithinAudio,
         firstPart
       );
-  
+
       // Step 6: Add second segment
       try {
         const response = await axios.post(
@@ -438,7 +438,7 @@ const AudioSegmentHandler = ({
         console.error('Failed to add second segment:', error.response?.data || error.message);
         throw new Error('Failed to add second audio segment');
       }
-  
+
       // Step 7: Update frontend state
       let newAudioLayers = [...audioLayers];
       const layer = [...newAudioLayers[layerIndex]];
@@ -447,14 +447,14 @@ const AudioSegmentHandler = ({
       layer.push(secondPart);
       newAudioLayers[layerIndex] = layer;
       setAudioLayers(newAudioLayers);
-  
+
       // Step 8: Save history and auto-save
       saveHistory([], newAudioLayers);
       autoSave([], newAudioLayers);
-  
+
       // Step 9: Reload timeline to sync with backend
       await loadProjectTimeline();
-  
+
       console.log('Successfully split extracted audio');
     } catch (error) {
       console.error('Error splitting extracted audio:', error.message);
