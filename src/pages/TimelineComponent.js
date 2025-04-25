@@ -265,12 +265,16 @@ const TimelineComponent = ({
                   thumbnail,
                   keyframes: segment.keyframes || {},
                   filters,
+                  cropL: segment.cropL ?? 0, // Add crop values
+                  cropR: segment.cropR ?? 0,
+                  cropT: segment.cropT ?? 0,
+                  cropB: segment.cropB ?? 0,
                 });
               }
             }
           }
         }
-
+        
         if (timelineState.imageSegments && timelineState.imageSegments.length > 0) {
           for (const imageSegment of timelineState.imageSegments) {
             const layerIndex = imageSegment.layer || 0;
@@ -279,7 +283,7 @@ const TimelineComponent = ({
             const filename = imageSegment.imagePath.split('/').pop();
             const filePath = `${API_BASE_URL}/projects/${projectId}/images/${encodeURIComponent(filename)}`;
             const thumbnail = await generateImageThumbnail(imageSegment.imagePath, imageSegment.element);
-            const filters = filterMap[imageSegment.id] || []; // Use filterMap to assign filters
+            const filters = filterMap[imageSegment.id] || [];
             console.log(`Image segment ID ${imageSegment.id}: filters=`, JSON.stringify(filters, null, 2));
             newVideoLayers[layerIndex].push({
               id: imageSegment.id,
@@ -302,6 +306,10 @@ const TimelineComponent = ({
               isElement: imageSegment.element !== undefined ? imageSegment.element : false,
               keyframes: imageSegment.keyframes || {},
               filters,
+              cropL: imageSegment.cropL ?? 0, // Add crop values
+              cropR: imageSegment.cropR ?? 0,
+              cropT: imageSegment.cropT ?? 0,
+              cropB: imageSegment.cropB ?? 0,
             });
           }
         }
@@ -967,13 +975,13 @@ const TimelineComponent = ({
             backgroundBorderWidth: item.backgroundBorderWidth,
             backgroundBorderColor: item.backgroundBorderColor,
             backgroundPadding: item.backgroundPadding,
-            backgroundBorderRadius: item.backgroundBorderRadius, // New
+            backgroundBorderRadius: item.backgroundBorderRadius,
             shadowColor: item.shadowColor,
             shadowOffsetX: item.shadowOffsetX,
             shadowOffsetY: item.shadowOffsetY,
-            shadowBlurRadius: item.shadowBlurRadius, // New
-            shadowSpread: item.shadowSpread, // New
-            shadowOpacity: item.shadowOpacity, // New
+            shadowBlurRadius: item.shadowBlurRadius,
+            shadowSpread: item.shadowSpread,
+            shadowOpacity: item.shadowOpacity,
             keyframes: item.keyframes || {},
           });
         } else if (item.type === 'video') {
@@ -990,6 +998,10 @@ const TimelineComponent = ({
             positionY: item.positionY,
             scale: item.scale,
             keyframes: item.keyframes || {},
+            cropL: item.cropL ?? 0, // Add crop values
+            cropR: item.cropR ?? 0,
+            cropT: item.cropT ?? 0,
+            cropB: item.cropB ?? 0,
           });
         } else if (item.type === 'image') {
           segments.push({
@@ -1002,7 +1014,18 @@ const TimelineComponent = ({
             positionX: item.positionX,
             positionY: item.positionY,
             scale: item.scale,
+            opacity: item.opacity,
+            width: item.width,
+            height: item.height,
+            effectiveWidth: item.effectiveWidth,
+            effectiveHeight: item.effectiveHeight,
+            maintainAspectRatio: item.maintainAspectRatio,
+            isElement: item.isElement,
             keyframes: item.keyframes || {},
+            cropL: item.cropL ?? 0, // Add crop values
+            cropR: item.cropR ?? 0,
+            cropT: item.cropT ?? 0,
+            cropB: item.cropB ?? 0,
           });
         } else if (item.type === 'audio') {
           segments.push({

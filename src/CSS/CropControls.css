@@ -1,0 +1,61 @@
+.crop-controls {
+  background-color: #1e1e1e; /* Matches .project-editor background from ProjectEditor.css */
+  padding: 15px;
+  color: #e0e0e0; /* Matches text color from ProjectEditor.css */
+}
+
+.crop-controls h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  color: #e0e0e0; /* Matches text color */
+}
+
+.crop-control {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.crop-control label {
+  width: 120px; /* Fixed width for consistent alignment */
+  font-size: 14px;
+  color: #e0e0e0; /* Matches text color */
+}
+
+.slider-container {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.slider-container input[type="range"] {
+  flex: 1;
+  background: #444; /* Matches slider background from ProjectEditor.css (e.g., .zoom-slider) */
+  height: 5px;
+  -webkit-appearance: none;
+  outline: none;
+}
+
+.slider-container input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  background: #4285f4; /* Matches button color from ProjectEditor.css (e.g., .control-button) */
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.slider-container input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  background: #4285f4; /* Matches button color */
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.slider-value {
+  margin-left: 10px;
+  font-size: 14px;
+  color: #e0e0e0; /* Matches text color */
+  min-width: 40px;
+}
