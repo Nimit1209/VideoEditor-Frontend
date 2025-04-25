@@ -20,15 +20,17 @@ const VideoPreview = ({
   videos = [],
   photos = [],
   transitions = [],
-  fps=25,
+  fps = 25,
+  projectId,
 }) => {
   const [loadingVideos, setLoadingVideos] = useState(new Set());
+  const [loadingAudios, setLoadingAudios] = useState(new Set());
   const [preloadComplete, setPreloadComplete] = useState(false);
   const [scale, setScale] = useState(1);
   const previewContainerRef = useRef(null);
   const videoRefs = useRef({});
-  const preloadRefs = useRef({});
   const audioRefs = useRef({});
+  const preloadRefs = useRef({});
   const animationFrameRef = useRef(null);
   const lastUpdateTimeRef = useRef(0);
   const glCanvasRef = useRef(null);
@@ -59,6 +61,12 @@ const VideoPreview = ({
     return defaultValue;
   };
 
+  useEffect(() => {
+    // Debug audio elements
+    console.log("Visible audio elements:", getVisibleAudioElements());
+    console.log("Audio refs:", audioRefs.current);
+  }, [currentTime]);
+
   const computeTransitionEffects = (element, localTime) => {
     const relevantTransitions = transitions.filter(
       (t) =>
@@ -81,13 +89,7 @@ const VideoPreview = ({
       const progress = (currentTime - transition.timelineStartTime) / transition.duration;
       const parameters = transition.parameters || {};
 
-      if (transition.type === 'Fade') {
-        if (transition.toSegmentId === element.id && transition.fromSegmentId === null) {
-          effects.opacity = lerp(0, 1, progress);
-        } else if (transition.fromSegmentId === element.id) {
-          effects.opacity = lerp(1, 0, progress);
-        }
-      } else if (transition.type === 'Slide') {
+      if (transition.type === 'Slide') {
         const direction = parameters.direction || 'right';
         const canvasWidth = canvasDimensions.width;
         const canvasHeight = canvasDimensions.height;
@@ -111,72 +113,23 @@ const VideoPreview = ({
             effects.positionY = lerp(0, canvasHeight, progress);
           } else if (direction === 'bottom') {
             effects.positionY = lerp(0, -canvasHeight, progress);
-          }
-        }
-      } else if (transition.type === 'Wipe') {
-        const direction = parameters.direction || 'left';
-        if (transition.toSegmentId === element.id) {
-          if (direction === 'left') {
-            effects.clipPath = `inset(0 calc((1 - ${progress}) * 100%) 0 0)`;
-          } else if (direction === 'right') {
-            effects.clipPath = `inset(0 0 0 calc((1 - ${progress}) * 100%))`;
-          } else if (direction === 'top') {
-            effects.clipPath = `inset(calc((1 - ${progress}) * 100%) 0 0 0)`;
-          } else if (direction === 'bottom') {
-            effects.clipPath = `inset(0 0 calc((1 - ${progress}) * 100%) 0)`;
-          }
-        } else if (transition.fromSegmentId === element.id) {
-          if (direction === 'left') {
-            effects.clipPath = `inset(0 calc(${progress} * 100%) 0 0)`;
-          } else if (direction === 'right') {
-            effects.clipPath = `inset(0 0 0 calc(${progress} * 100%))`;
-          } else if (direction === 'top') {
-            effects.clipPath = `inset(calc(${progress} * 100%) 0 0 0)`;
-          } else if (direction === 'bottom') {
-            effects.clipPath = `inset(0 0 calc(${progress} * 100%) 0)`;
           }
         }
       } else if (transition.type === 'Zoom') {
         const direction = parameters.direction || 'in';
         if (transition.toSegmentId === element.id) {
-          effects.scale = direction === 'in' ? lerp(0., 1, progress) : lerp(2, 1, progress);
+          effects.scale = direction === 'in' ? lerp(0.1, 1, progress) : lerp(2, 1, progress);
         } else if (transition.fromSegmentId === element.id) {
           effects.scale = direction === 'in' ? lerp(1, 2, progress) : lerp(1, 0.1, progress);
         }
       } else if (transition.type === 'Rotate') {
-          const direction = parameters.direction || 'clockwise';
-          const rotationSpeed = direction === 'clockwise' ? 720 : -720; // 720 deg/s
-          const angle = rotationSpeed * transition.duration; // Total angle for transition duration
-          if (transition.toSegmentId === element.id) {
-              effects.rotate = lerp(angle, 0, progress); // From angle to 0
-          } else if (transition.fromSegmentId === element.id) {
-              effects.rotate = lerp(0, angle, progress); // From 0 to angle
-          }
-      } else if (transition.type === 'Push') {
-        const direction = parameters.direction || 'right';
-        const canvasWidth = canvasDimensions.width;
-        const canvasHeight = canvasDimensions.height;
-
+        const direction = parameters.direction || 'clockwise';
+        const rotationSpeed = direction === 'clockwise' ? 720 : -720; // 720 deg/s
+        const angle = rotationSpeed * transition.duration; // Total angle for transition duration
         if (transition.toSegmentId === element.id) {
-          if (direction === 'right') {
-            effects.positionX = lerp(-canvasWidth, 0, progress);
-          } else if (direction === 'left') {
-            effects.positionX = lerp(canvasWidth, 0, progress);
-          } else if (direction === 'top') {
-            effects.positionY = lerp(canvasHeight, 0, progress);
-          } else if (direction === 'bottom') {
-            effects.positionY = lerp(-canvasHeight, 0, progress);
-          }
+          effects.rotate = lerp(angle, 0, progress); // From angle to 0
         } else if (transition.fromSegmentId === element.id) {
-          if (direction === 'right') {
-            effects.positionX = lerp(0, canvasWidth, progress);
-          } else if (direction === 'left') {
-            effects.positionX = lerp(0, -canvasWidth, progress);
-          } else if (direction === 'top') {
-            effects.positionY = lerp(0, -canvasHeight, progress);
-          } else if (direction === 'bottom') {
-            effects.positionY = lerp(0, canvasHeight, progress);
-          }
+          effects.rotate = lerp(0, angle, progress); // From 0 to angle
         }
       }
     }
@@ -230,6 +183,14 @@ const VideoPreview = ({
       .join('|');
   }, [videoLayers]);
 
+  const audioLayerIds = useMemo(() => {
+    return audioLayers
+      .flat()
+      .filter((item) => item.type === 'audio')
+      .map((item) => `${item.id}-${item.fileName}`)
+      .join('|');
+  }, [audioLayers]);
+
   useEffect(() => {
     try {
       fxCanvasRef.current = fx.canvas();
@@ -263,7 +224,7 @@ const VideoPreview = ({
           video.preload = 'auto';
           video.src = videoUrl;
           video.crossOrigin = 'anonymous';
-          video.muted = true;
+          video.muted = true; // Ensure preload video is muted
           video.style.display = 'none';
           document.body.appendChild(video);
           preloadRefs.current[item.id] = video;
@@ -295,18 +256,61 @@ const VideoPreview = ({
       });
 
       setLoadingVideos(new Set(allVideoItems.map((item) => item.id)));
-      Promise.all(preloadPromises).then(() => {
-        setPreloadComplete(true);
-        console.log('All videos preloaded');
-      });
+      return preloadPromises;
     };
 
-    preloadVideos();
+    const preloadAudios = () => {
+      const allAudioItems = audioLayers.flat().filter((item) => item.type === 'audio');
+      const preloadPromises = allAudioItems.map((item) => {
+        const audioUrl = `${API_BASE_URL}/projects/{projectId}/audio/${encodeURIComponent(item.fileName)}`;
+
+        if (!preloadRefs.current[item.id]) {
+          const audio = document.createElement('audio');
+          audio.crossOrigin = 'anonymous';
+          audio.preload = 'auto';
+          audio.muted = false;
+          audio.src = audioUrl;
+          audio.style.display = 'none';
+          document.body.appendChild(audio);
+          preloadRefs.current[item.id] = audio;
+          audio.src = audioUrl; // Set src after appending
+          audio.load(); // Explicitly load to initialize
+
+          console.log(`Preloading audio: ${item.fileName}, URL: ${audioUrl}`);
+
+          return new Promise((resolve) => {
+            audio.onloadeddata = () => {
+              setLoadingAudios((prev) => {
+                const newSet = new Set(prev);
+                newSet.delete(item.id);
+                return newSet;
+              });
+              resolve();
+            };
+            audio.onerror = () => {
+              console.error(`Failed to preload audio ${item.fileName}`);
+              resolve();
+            };
+          });
+        }
+        return Promise.resolve();
+      });
+
+      setLoadingAudios(new Set(allAudioItems.map((item) => item.id)));
+      return preloadPromises;
+    };
+
+    Promise.all([...preloadVideos(), ...preloadAudios()]).then(() => {
+      setPreloadComplete(true);
+      console.log('All videos and audios preloaded');
+    });
 
     return () => {
-      Object.values(preloadRefs.current).forEach((video) => {
-        video.pause();
-        document.body.removeChild(video);
+      Object.values(preloadRefs.current).forEach((element) => {
+        if (element.tagName === 'VIDEO' || element.tagName === 'AUDIO') {
+          element.pause();
+          document.body.removeChild(element);
+        }
       });
       Object.values(glTextureRefs.current).forEach((texture) => {
         try {
@@ -318,7 +322,7 @@ const VideoPreview = ({
       preloadRefs.current = {};
       glTextureRefs.current = {};
     };
-  }, [videoLayerIds]);
+  }, [videoLayerIds, audioLayerIds]);
 
   useEffect(() => {
     const preloadImages = () => {
@@ -350,11 +354,9 @@ const VideoPreview = ({
 
   useEffect(() => {
     const visibleElements = getVisibleElements();
+    const visibleAudioElements = getVisibleAudioElements();
 
-    const topmostVideo = visibleElements
-      .filter((el) => el.type === 'video')
-      .sort((a, b) => b.layerIndex - a.layerIndex)[0];
-
+    // Handle video playback
     const setVideoTimeFunctions = new Map();
 
     visibleElements.forEach((element) => {
@@ -386,10 +388,11 @@ const VideoPreview = ({
             videoRef.addEventListener('loadeddata', setVideoTime, { once: true });
           }
 
-          videoRef.muted = topmostVideo && topmostVideo.id !== element.id;
+          // Ensure all videos are muted
+          videoRef.muted = true;
 
           if (isPlaying && preloadComplete) {
-            videoRef.play().catch((error) => console.error('Playback error:', error));
+            videoRef.play().catch((error) => console.error('Video playback error:', error));
           } else {
             videoRef.pause();
           }
@@ -397,11 +400,77 @@ const VideoPreview = ({
       }
     });
 
+    // Handle audio playback
+    const setAudioTimeFunctions = new Map();
+
+    visibleAudioElements.forEach((element) => {
+      const audioRef = audioRefs.current[element.id];
+      if (audioRef) {
+        const audioUrl = `${API_BASE_URL}/projects/{projectId}/audio/${encodeURIComponent(element.fileName)}`;
+
+        if (!audioRef.src) {
+          audioRef.src = audioUrl;
+          audioRef.crossOrigin = 'anonymous';
+          audioRef.muted = false;
+          audioRef.load();
+          console.log(`Initialized audio ${element.fileName} with src ${audioUrl}`);
+        }
+
+        const setAudioTime = () => {
+          const targetTime = element.localTime + (element.startTimeWithinAudio || 0);
+          if (Math.abs(audioRef.currentTime - targetTime) > 0.05) {
+            audioRef.currentTime = targetTime;
+            console.log(`Set audio ${element.fileName} to time ${targetTime}`);
+          }
+        };
+        setAudioTimeFunctions.set(element.id, setAudioTime);
+
+        if (audioRef.readyState >= 2) {
+          setAudioTime();
+        } else {
+          audioRef.addEventListener('loadeddata', () => {
+            setAudioTime();
+            console.log(`Audio ${element.fileName} loadeddata, readyState: ${audioRef.readyState}`);
+          }, { once: true });
+        }
+
+        // Apply volume from keyframes or default
+        const volume = getKeyframeValue(
+          element.keyframes && element.keyframes.volume,
+          element.localTime,
+          element.volume || 1.0
+        );
+        audioRef.volume = Math.max(0, Math.min(1, volume));
+        console.log(`Set audio ${element.fileName} volume to ${volume}`);
+
+        if (isPlaying && preloadComplete) {
+          audioRef.play()
+            .then(() => console.log(`Audio ${element.fileName} started playing`))
+            .catch((error) => console.error(`Audio playback error for ${element.fileName}:`, error));
+        } else {
+          audioRef.pause();
+          console.log(`Audio ${element.fileName} paused (isPlaying: ${isPlaying}, preloadComplete: ${preloadComplete})`);
+        }
+      } else {
+        console.warn(`No audioRef found for element ID ${element.id}`);
+      }
+    });
+
+    // Pause non-visible videos
     const visibleIds = visibleElements.map((el) => el.id);
     Object.entries(videoRefs.current).forEach(([id, videoRef]) => {
       if (!visibleIds.includes(id) && videoRef) {
         videoRef.pause();
         videoRef.muted = true;
+      }
+    });
+
+    // Pause non-visible audios
+    const visibleAudioIds = visibleAudioElements.map((el) => el.id);
+    Object.entries(audioRefs.current).forEach(([id, audioRef]) => {
+      if (!visibleAudioIds.includes(id) && audioRef) {
+        audioRef.pause();
+        console.log(`Paused non-visible audio ID ${id}`);
       }
     });
 
@@ -412,8 +481,14 @@ const VideoPreview = ({
           videoRef.removeEventListener('loadeddata', setVideoTime);
         }
       });
+      setAudioTimeFunctions.forEach((setAudioTime, id) => {
+        const audioRef = audioRefs.current[id];
+        if (audioRef) {
+          audioRef.removeEventListener('loadeddata', setAudioTime);
+        }
+      });
     };
-  }, [currentTime, isPlaying, videoLayers, preloadComplete]);
+  }, [currentTime, isPlaying, videoLayers, audioLayers, preloadComplete]);
 
   useEffect(() => {
     const frameDuration = 1 / fps; // Duration of one frame in seconds
@@ -512,6 +587,24 @@ const VideoPreview = ({
     return visibleElements.sort((a, b) => a.layerIndex - b.layerIndex);
   };
 
+  const getVisibleAudioElements = () => {
+    const visibleAudioElements = [];
+    audioLayers.forEach((layer, layerIndex) => {
+      layer.forEach((item) => {
+        const itemStartTime = item.startTime || 0;
+        const itemEndTime = itemStartTime + item.duration;
+        if (currentTime >= itemStartTime && currentTime < itemEndTime) {
+          visibleAudioElements.push({
+            ...item,
+            layerIndex,
+            localTime: currentTime - itemStartTime,
+          });
+        }
+      });
+    });
+    return visibleAudioElements;
+  };
+
   const applyWebGLFilters = (element, sourceElement) => {
     return sourceElement;
   };
@@ -601,7 +694,7 @@ const VideoPreview = ({
                   <video
                     ref={(el) => (videoRefs.current[element.id] = el)}
                     className="preview-video"
-                    muted={false}
+                    muted={true} // Always mute video elements
                     crossOrigin="anonymous"
                     style={{
                       position: 'absolute',
@@ -759,11 +852,23 @@ const VideoPreview = ({
             }
             return null;
           })}
+          {/* Audio elements for playback */}
+          {getVisibleAudioElements().map((element) => (
+            <audio
+              key={element.id}
+              ref={(el) => (audioRefs.current[element.id] = el)}
+              preload="auto"
+              crossOrigin="anonymous"
+              muted={false}
+              onError={(e) => console.error(`Error loading audio ${element.fileName}:`, e)}
+              onLoadedData={() => console.log(`Audio ${element.fileName} loaded`)}
+            />
+          ))}
         </div>
 
         {visibleElements.length === 0 && <div className="preview-empty-state"></div>}
 
-        {loadingVideos.size > 0 && (
+        {(loadingVideos.size > 0 || loadingAudios.size > 0) && (
           <div className="preview-loading">
             <div className="preview-spinner"></div>
           </div>
