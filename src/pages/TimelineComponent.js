@@ -584,17 +584,14 @@ const TimelineComponent = ({
     e.preventDefault();
     e.stopPropagation();
     const dragElements = document.querySelectorAll('.dragging');
-    dragElements.forEach((el) => el.classList.remove('dragging'));
+    dragElements.forEach((el) => el.classList.remove('dragging', 'invalid'));
     if (timelineRef.current) timelineRef.current.classList.remove('showing-new-layer');
-
-    setDraggingItem(null);
-    setDragLayer(null);
-    setDragOffset(0);
+  
     setSnapIndicators([]);
-
+  
     const mouseX = e.clientX;
     const mouseY = e.clientY;
-
+  
     const dataString = e.dataTransfer.getData('application/json');
     let dragData = null;
     if (dataString) {
@@ -604,7 +601,7 @@ const TimelineComponent = ({
         console.error('Error parsing drag data:', error);
       }
     }
-
+  
     if (dragData?.type === 'transition') {
       const rect = timelineRef.current.getBoundingClientRect();
       const clickX = mouseX - rect.left;
@@ -616,7 +613,7 @@ const TimelineComponent = ({
       const reversedIndex = Math.floor((mouseY - rect.top) / layerHeight);
       let layerIndex;
       let isAudioLayer = false;
-
+  
       if (reversedIndex <= totalVideoLayers) {
         layerIndex = totalVideoLayers - reversedIndex;
       } else if (reversedIndex >= totalVideoLayers + 1 && reversedIndex < totalLayers - 1) {
@@ -625,7 +622,7 @@ const TimelineComponent = ({
       } else {
         layerIndex = 0;
       }
-
+  
       if (!isAudioLayer && layerIndex >= 0 && layerIndex < videoLayers.length) {
         const { fromSegment, toSegment } = findAdjacentSegments(timelinePosition, layerIndex, videoLayers);
         if (fromSegment && toSegment) {
@@ -652,35 +649,50 @@ const TimelineComponent = ({
       } else {
         console.warn('Transition drop ignored: Invalid layer or audio layer');
       }
-
+  
       setDraggingItem(null);
       setDragLayer(null);
       setDragOffset(0);
-      setSnapIndicators([]);
       return;
     }
-
+  
     if (dragData?.type === 'audio' || (draggingItem && draggingItem.type === 'audio')) {
-      const audioDropResult = await audioHandler.handleAudioDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
+      const audioDropResult = await audioHandler.handleAudioDrop(
+        e,
+        draggingItem,
+        dragLayer,
+        mouseX,
+        mouseY,
+        timeScale,
+        dragOffset,
+        snapIndicators
+      );
       if (audioDropResult === undefined) {
-        setDraggingItem(null);
-        setDragLayer(null);
-        setDragOffset(0);
-        setSnapIndicators([]);
         saveHistory();
-        return;
       }
-    }
-
-    if (dragData?.type === 'media' || (draggingItem && draggingItem.type === 'video')) {
-      await videoHandler.handleVideoDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
       setDraggingItem(null);
       setDragLayer(null);
       setDragOffset(0);
-      setSnapIndicators([]);
       return;
     }
-
+  
+    if (dragData?.type === 'media' || (draggingItem && draggingItem.type === 'video')) {
+      await videoHandler.handleVideoDrop(
+        e,
+        draggingItem,
+        dragLayer,
+        mouseX,
+        mouseY,
+        timeScale,
+        dragOffset,
+        snapIndicators
+      );
+      setDraggingItem(null);
+      setDragLayer(null);
+      setDragOffset(0);
+      return;
+    }
+  
     if (
       dragData?.type === 'photo' ||
       dragData?.type === 'element' ||
@@ -699,31 +711,112 @@ const TimelineComponent = ({
         isElement
       );
       if (imageDropResult === undefined) {
-        setDraggingItem(null);
-        setDragLayer(null);
-        setDragOffset(0);
-        setSnapIndicators([]);
-        return;
+        saveHistory();
       }
-      saveHistory();
-    }
-
-    const textDropResult = await textHandler.handleTextDrop(e, draggingItem, dragLayer, mouseX, mouseY, timeScale, dragOffset, snapIndicators);
-    if (textDropResult) {
       setDraggingItem(null);
       setDragLayer(null);
       setDragOffset(0);
-      setSnapIndicators([]);
-      saveHistory();
       return;
     }
-
+  
+    const textDropResult = await textHandler.handleTextDrop(
+      e,
+      draggingItem,
+      dragLayer,
+      mouseX,
+      mouseY,
+      timeScale,
+      dragOffset,
+      snapIndicators
+    );
+    if (textDropResult) {
+      saveHistory();
+      setDraggingItem(null);
+      setDragLayer(null);
+      setDragOffset(0);
+      return;
+    }
+  
+    // Handle repositioning of existing segment
+    if (draggingItem && draggingItem.tempStartTime !== undefined) {
+      const isAudioLayer = draggingItem.layer < 0;
+      const layerArray = isAudioLayer ? audioLayers : videoLayers;
+      const layerIndex = isAudioLayer ? Math.abs(draggingItem.layer) - 1 : draggingItem.layer;
+      let newVideoLayers = [...videoLayers];
+      let newAudioLayers = [...audioLayers];
+      const layer = [...layerArray[layerIndex]];
+      const itemIndex = layer.findIndex((i) => i.id === draggingItem.id);
+  
+      if (itemIndex !== -1 && draggingItem.isValidPosition) {
+        const item = { ...layer[itemIndex] };
+        item.startTime = draggingItem.tempStartTime;
+        item.timelineStartTime = draggingItem.tempStartTime;
+        item.timelineEndTime = draggingItem.tempStartTime + item.duration;
+        layer[itemIndex] = item;
+  
+        if (isAudioLayer) {
+          newAudioLayers[layerIndex] = layer;
+          setAudioLayers(newAudioLayers);
+        } else {
+          newVideoLayers[layerIndex] = layer;
+          setVideoLayers(newVideoLayers);
+        }
+  
+        // Save history and auto-save
+        saveHistory(newVideoLayers, newAudioLayers);
+        autoSave(newVideoLayers, newAudioLayers);
+  
+        // Update backend
+        if (item.type === 'video') {
+          await videoHandler.updateSegmentPosition(
+            item.id,
+            item.startTime,
+            item.layer,
+            item.duration,
+            item.startTimeWithinVideo,
+            item.endTimeWithinVideo
+          );
+        } else if (item.type === 'text') {
+          await textHandler.updateTextSegment(item.id, item, item.startTime, item.layer);
+        } else if (item.type === 'image') {
+          const updatedSettings = {
+            positionX: item.positionX,
+            positionY: item.positionY,
+            scale: item.scale,
+            opacity: item.opacity,
+            width: item.width,
+            height: item.height,
+            effectiveWidth: item.effectiveWidth,
+            effectiveHeight: item.effectiveHeight,
+            maintainAspectRatio: item.maintainAspectRatio,
+          };
+          await imageHandler.updateImageSegment(
+            item.id,
+            item.startTime,
+            item.layer,
+            item.duration,
+            updatedSettings
+          );
+        } else if (item.type === 'audio') {
+          await audioHandler.updateAudioSegment(
+            item.id,
+            item.startTime,
+            item.layer,
+            item.duration,
+            item.startTimeWithinAudio,
+            item.endTimeWithinAudio
+          );
+        }
+      } else if (itemIndex !== -1) {
+        console.log('Drop ignored: Position would cause overlap, reverting to original position');
+        // No state update needed, segment remains at original position
+      }
+    }
+  
     setDraggingItem(null);
     setDragLayer(null);
     setDragOffset(0);
-    setSnapIndicators([]);
   };
-
   const handleTimelineClick = async (e) => {
     if (!timelineRef.current) return;
     const rect = timelineRef.current.getBoundingClientRect();

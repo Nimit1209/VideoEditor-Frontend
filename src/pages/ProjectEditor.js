@@ -52,12 +52,6 @@ const ProjectEditor = () => {
     backgroundBorderColor: '#000000',
     backgroundPadding: 0,
     backgroundBorderRadius: 0, // New: Default to no border radius
-    shadowColor: 'transparent',
-    shadowOffsetX: 0,
-    shadowOffsetY: 0,
-    shadowBlurRadius: 0, // New: Default to no blur
-    shadowSpread: 0, // New: Default to no spread
-    shadowOpacity: 1.0, // New: Default to fully opaque
   });
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [filterParams, setFilterParams] = useState({});
@@ -186,10 +180,6 @@ const ProjectEditor = () => {
                 backgroundBorderWidth: item.backgroundBorderWidth, // New
                 backgroundBorderColor: item.backgroundBorderColor, // New
                 backgroundPadding: item.backgroundPadding, // New
-                shadowColor: item.shadowColor, // New
-                shadowOffsetX: item.shadowOffsetX, // New
-                shadowOffsetY: item.shadowOffsetY, // New
-                shadowAngle: item.shadowAngle, // New
                 keyframes: item.keyframes || {},
               });
             }
@@ -376,10 +366,6 @@ const ProjectEditor = () => {
               backgroundBorderWidth: item.backgroundBorderWidth, // New
               backgroundBorderColor: item.backgroundBorderColor, // New
               backgroundPadding: item.backgroundPadding, // New
-              shadowColor: item.shadowColor, // New
-              shadowOffsetX: item.shadowOffsetX, // New
-              shadowOffsetY: item.shadowOffsetY, // New
-              shadowAngle: item.shadowAngle, // New
               keyframes: item.keyframes || {},
             });
           }
@@ -1052,12 +1038,6 @@ const ProjectEditor = () => {
         backgroundBorderColor: segment.backgroundBorderColor || '#000000',
         backgroundPadding: segment.backgroundPadding ?? 0,
         backgroundBorderRadius: segment.backgroundBorderRadius ?? 0, // New
-        shadowColor: segment.shadowColor || 'transparent',
-        shadowOffsetX: segment.shadowOffsetX ?? 0,
-        shadowOffsetY: segment.shadowOffsetY ?? 0,
-        shadowBlurRadius: segment.shadowBlurRadius ?? 0, // New
-        shadowSpread: segment.shadowSpread ?? 0, // New
-        shadowOpacity: segment.shadowOpacity ?? 1.0, // New
       });
       setIsTextToolOpen(true);
     } else {
@@ -1087,12 +1067,6 @@ const ProjectEditor = () => {
                 backgroundBorderColor: newSettings.backgroundBorderColor,
                 backgroundPadding: newSettings.backgroundPadding,
                 backgroundBorderRadius: newSettings.backgroundBorderRadius, // New
-                shadowColor: newSettings.shadowColor,
-                shadowOffsetX: newSettings.shadowOffsetX,
-                shadowOffsetY: newSettings.shadowOffsetY,
-                shadowBlurRadius: newSettings.shadowBlurRadius, // New
-                shadowSpread: newSettings.shadowSpread, // New
-                shadowOpacity: newSettings.shadowOpacity, // New
               }
             : item
         );
@@ -1125,12 +1099,6 @@ const ProjectEditor = () => {
         backgroundBorderColor: textSettings.backgroundBorderColor,
         backgroundPadding: textSettings.backgroundPadding,
         backgroundBorderRadius: textSettings.backgroundBorderRadius, // New
-        shadowColor: textSettings.shadowColor,
-        shadowOffsetX: textSettings.shadowOffsetX,
-        shadowOffsetY: textSettings.shadowOffsetY,
-        shadowBlurRadius: textSettings.shadowBlurRadius, // New
-        shadowSpread: textSettings.shadowSpread, // New
-        shadowOpacity: textSettings.shadowOpacity, // New
         keyframes: editingTextSegment.keyframes,
       };
       await axios.put(
@@ -1153,12 +1121,6 @@ const ProjectEditor = () => {
           backgroundBorderColor: updatedTextSegment.backgroundBorderColor,
           backgroundPadding: updatedTextSegment.backgroundPadding,
           backgroundBorderRadius: updatedTextSegment.backgroundBorderRadius, // New
-          shadowColor: updatedTextSegment.shadowColor,
-          shadowOffsetX: updatedTextSegment.shadowOffsetX,
-          shadowOffsetY: updatedTextSegment.shadowOffsetY,
-          shadowBlurRadius: updatedTextSegment.shadowBlurRadius, // New
-          shadowSpread: updatedTextSegment.shadowSpread, // New
-          shadowOpacity: updatedTextSegment.shadowOpacity, // New
           keyframes: keyframes,
         },
         { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
@@ -1199,12 +1161,6 @@ const ProjectEditor = () => {
           backgroundBorderColor: textSettings.backgroundBorderColor,
           backgroundPadding: textSettings.backgroundPadding,
           backgroundBorderRadius: textSettings.backgroundBorderRadius, // New
-          shadowColor: textSettings.shadowColor,
-          shadowOffsetX: textSettings.shadowOffsetX,
-          shadowOffsetY: textSettings.shadowOffsetY,
-          shadowBlurRadius: textSettings.shadowBlurRadius, // New
-          shadowSpread: textSettings.shadowSpread, // New
-          shadowOpacity: textSettings.shadowOpacity, // New
         },
         { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
       );
@@ -1228,12 +1184,6 @@ const ProjectEditor = () => {
         backgroundBorderColor: textSettings.backgroundBorderColor,
         backgroundPadding: textSettings.backgroundPadding,
         backgroundBorderRadius: textSettings.backgroundBorderRadius, // New
-        shadowColor: textSettings.shadowColor,
-        shadowOffsetX: textSettings.shadowOffsetX,
-        shadowOffsetY: textSettings.shadowOffsetY,
-        shadowBlurRadius: textSettings.shadowBlurRadius, // New
-        shadowSpread: textSettings.shadowSpread, // New
-        shadowOpacity: textSettings.shadowOpacity, // New
       };
       setVideoLayers((prevLayers) => {
         const newLayers = [...prevLayers];
@@ -1256,12 +1206,6 @@ const ProjectEditor = () => {
         backgroundBorderColor: newSegment.backgroundBorderColor,
         backgroundPadding: newSegment.backgroundPadding,
         backgroundBorderRadius: newSegment.backgroundBorderRadius, // New
-        shadowColor: newSegment.shadowColor,
-        shadowOffsetX: newSegment.shadowOffsetX,
-        shadowOffsetY: newSegment.shadowOffsetY,
-        shadowBlurRadius: newSegment.shadowBlurRadius, // New
-        shadowSpread: newSegment.shadowSpread, // New
-        shadowOpacity: newSegment.shadowOpacity, // New
       });
       setIsTextToolOpen(true);
       preloadMedia();
@@ -2804,71 +2748,90 @@ const ProjectEditor = () => {
   };
 
   const saveSegmentChanges = async (updatedKeyframes = keyframes) => {
-    if (!selectedSegment || !sessionId || !projectId) return;
+    if (!selectedSegment || !sessionId || !projectId) {
+      console.error('Cannot save segment changes: Missing required data', {
+        selectedSegment,
+        sessionId,
+        projectId,
+      });
+      return;
+    }
+  
     try {
       const token = localStorage.getItem('token');
       switch (selectedSegment.type) {
         case 'video':
+          const normalizedTempValues = {
+            positionX: tempSegmentValues.positionX !== undefined ? Number(tempSegmentValues.positionX) : 0,
+            positionY: tempSegmentValues.positionY !== undefined ? Number(tempSegmentValues.positionY) : 0,
+            scale: tempSegmentValues.scale !== undefined ? Number(tempSegmentValues.scale) : 1,
+            opacity: tempSegmentValues.opacity !== undefined ? Number(tempSegmentValues.opacity) : 1,
+            cropL: tempSegmentValues.cropL !== undefined ? Number(tempSegmentValues.cropL) : 0,
+            cropR: tempSegmentValues.cropR !== undefined ? Number(tempSegmentValues.cropR) : 0,
+            cropT: tempSegmentValues.cropT !== undefined ? Number(tempSegmentValues.cropT) : 0,
+            cropB: tempSegmentValues.cropB !== undefined ? Number(tempSegmentValues.cropB) : 0,
+          };
+  
+          console.log('Normalized temp values for video:', normalizedTempValues);
+  
           const videoPayload = {
             segmentId: selectedSegment.id || '',
-            positionX: updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0 ? null : Number(tempSegmentValues.positionX) || 0,
-            positionY: updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0 ? null : Number(tempSegmentValues.positionY) || 0,
-            scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? null : Number(tempSegmentValues.scale) || 1,
-            opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? null : Number(tempSegmentValues.opacity) || 1,
+            positionX: updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0 ? undefined : normalizedTempValues.positionX,
+            positionY: updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0 ? undefined : normalizedTempValues.positionY,
+            scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? undefined : normalizedTempValues.scale,
+            opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : normalizedTempValues.opacity,
             layer: Number(selectedSegment.layer) || 0,
             timelineStartTime: Number(selectedSegment.startTime) || 0,
             timelineEndTime: Number(selectedSegment.startTime + selectedSegment.duration) || 0,
             startTime: Number(selectedSegment.startTimeWithinVideo) || 0,
             endTime: Number(selectedSegment.endTimeWithinVideo) || 0,
-            cropL: updatedKeyframes.cropL && updatedKeyframes.cropL.length > 0 ? null : Number(tempSegmentValues.cropL) || 0,
-            cropR: updatedKeyframes.cropR && updatedKeyframes.cropR.length > 0 ? null : Number(tempSegmentValues.cropR) || 0,
-            cropT: updatedKeyframes.cropT && updatedKeyframes.cropT.length > 0 ? null : Number(tempSegmentValues.cropT) || 0,
-            cropB: updatedKeyframes.cropB && updatedKeyframes.cropB.length > 0 ? null : Number(tempSegmentValues.cropB) || 0,
+            cropL: normalizedTempValues.cropL, // Always include crop values
+            cropR: normalizedTempValues.cropR,
+            cropT: normalizedTempValues.cropT,
+            cropB: normalizedTempValues.cropB,
             keyframes: updatedKeyframes || {},
           };
   
-          // Validate payload
-          if (!videoPayload.segmentId) {
-            console.error('Invalid segmentId:', videoPayload.segmentId);
-            throw new Error('segmentId is required');
+          // Validate crop values
+          const cropValues = [videoPayload.cropL, videoPayload.cropR, videoPayload.cropT, videoPayload.cropB];
+          if (cropValues.some(val => val === undefined || val === null || isNaN(val) || val < 0 || val > 100)) {
+            console.error('Invalid crop values in payload:', cropValues);
+            throw new Error('Crop values must be valid numbers between 0 and 100');
           }
-          const videoCropValues = [videoPayload.cropL, videoPayload.cropR, videoPayload.cropT, videoPayload.cropB];
-          if (videoCropValues.some(val => val !== null && (isNaN(val) || val < 0 || val > 100))) {
-            console.error('Invalid crop values:', videoCropValues);
-            throw new Error('Crop values must be numbers between 0 and 100');
-          }
-          if (videoPayload.cropL !== null && videoPayload.cropR !== null && videoPayload.cropL + videoPayload.cropR >= 100) {
+          if (videoPayload.cropL + videoPayload.cropR >= 100) {
             console.error('Crop left + right exceeds 100%:', videoPayload.cropL, videoPayload.cropR);
             throw new Error('Total crop (left + right) must be less than 100%');
           }
-          if (videoPayload.cropT !== null && videoPayload.cropB !== null && videoPayload.cropT + videoPayload.cropB >= 100) {
+          if (videoPayload.cropT + videoPayload.cropB >= 100) {
             console.error('Crop top + bottom exceeds 100%:', videoPayload.cropT, videoPayload.cropB);
             throw new Error('Total crop (top + bottom) must be less than 100%');
           }
   
-          console.log('Saving video segment payload:', JSON.stringify(videoPayload, null, 2));
-          await axios.put(
+          console.log('Video segment payload:', JSON.stringify(videoPayload, null, 2));
+  
+          const videoResponse = await axios.put(
             `${API_BASE_URL}/projects/${projectId}/update-segment`,
             videoPayload,
             { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
           );
+          console.log('Server response for video segment update:', videoResponse.data);
   
           // Update videoLayers
           setVideoLayers((prev) => {
             const newLayers = [...prev];
             const layerIndex = selectedSegment.layer;
-            const segmentIndex = newLayers[layerIndex].findIndex(s => s.id === selectedSegment.id);
+            const segmentIndex = newLayers[layerIndex].findIndex((s) => s.id === selectedSegment.id);
             if (segmentIndex !== -1) {
               newLayers[layerIndex][segmentIndex] = {
                 ...newLayers[layerIndex][segmentIndex],
-                cropL: videoPayload.cropL !== null ? videoPayload.cropL : newLayers[layerIndex][segmentIndex].cropL || 0,
-                cropR: videoPayload.cropR !== null ? videoPayload.cropR : newLayers[layerIndex][segmentIndex].cropR || 0,
-                cropT: videoPayload.cropT !== null ? videoPayload.cropT : newLayers[layerIndex][segmentIndex].cropT || 0,
-                cropB: videoPayload.cropB !== null ? videoPayload.cropB : newLayers[layerIndex][segmentIndex].cropB || 0,
-                positionX: videoPayload.positionX !== null ? videoPayload.positionX : newLayers[layerIndex][segmentIndex].positionX || 0,
-                positionY: videoPayload.positionY !== null ? videoPayload.positionY : newLayers[layerIndex][segmentIndex].positionY || 0,
-                scale: videoPayload.scale !== null ? videoPayload.scale : newLayers[layerIndex][segmentIndex].scale || 1,
-                opacity: videoPayload.opacity !== null ? videoPayload.opacity : newLayers[layerIndex][segmentIndex].opacity || 1,
+                cropL: videoPayload.cropL,
+                cropR: videoPayload.cropR,
+                cropT: videoPayload.cropT,
+                cropB: videoPayload.cropB,
+                positionX: videoPayload.positionX !== undefined ? videoPayload.positionX : newLayers[layerIndex][segmentIndex].positionX || 0,
+                positionY: videoPayload.positionY !== undefined ? videoPayload.positionY : newLayers[layerIndex][segmentIndex].positionY || 0,
+                scale: videoPayload.scale !== undefined ? videoPayload.scale : newLayers[layerIndex][segmentIndex].scale || 1,
+                opacity: videoPayload.opacity !== undefined ? videoPayload.opacity : newLayers[layerIndex][segmentIndex].opacity || 1,
                 startTime: videoPayload.timelineStartTime,
                 duration: videoPayload.timelineEndTime - videoPayload.timelineStartTime,
                 startTimeWithinVideo: videoPayload.startTime,
@@ -2882,59 +2845,65 @@ const ProjectEditor = () => {
           break;
   
         case 'image':
-          // Convert filters to Map<String, String>
-          const imageFiltersMap = Array.isArray(appliedFilters)
-            ? appliedFilters.reduce((map, filter) => {
-                if (filter.filterName && filter.filterValue !== undefined) {
-                  map[filter.filterName] = String(filter.filterValue);
-                }
-                return map;
-              }, {})
-            : {};
+          const normalizedImageValues = {
+            positionX: tempSegmentValues.positionX !== undefined ? Number(tempSegmentValues.positionX) : 0,
+            positionY: tempSegmentValues.positionY !== undefined ? Number(tempSegmentValues.positionY) : 0,
+            scale: tempSegmentValues.scale !== undefined ? Number(tempSegmentValues.scale) : 1,
+            opacity: tempSegmentValues.opacity !== undefined ? Number(tempSegmentValues.opacity) : 1,
+            cropL: tempSegmentValues.cropL !== undefined ? Number(tempSegmentValues.cropL) : 0,
+            cropR: tempSegmentValues.cropR !== undefined ? Number(tempSegmentValues.cropR) : 0,
+            cropT: tempSegmentValues.cropT !== undefined ? Number(tempSegmentValues.cropT) : 0,
+            cropB: tempSegmentValues.cropB !== undefined ? Number(tempSegmentValues.cropB) : 0,
+          };
   
           const payload = {
             segmentId: selectedSegment.id || '',
-            positionX: updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0 ? null : Number(tempSegmentValues.positionX) || 0,
-            positionY: updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0 ? null : Number(tempSegmentValues.positionY) || 0,
-            scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? null : Number(tempSegmentValues.scale) || 1,
-            opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? null : Number(tempSegmentValues.opacity) || 1,
+            positionX: updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0 ? undefined : normalizedImageValues.positionX,
+            positionY: updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0 ? undefined : normalizedImageValues.positionY,
+            scale: updatedKeyframes.scale && updatedKeyframes.scale.length > 0 ? undefined : normalizedImageValues.scale,
+            opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : normalizedImageValues.opacity,
             layer: Number(selectedSegment.layer) || 0,
             timelineStartTime: Number(selectedSegment.startTime) || 0,
             timelineEndTime: Number(selectedSegment.startTime + selectedSegment.duration) || 0,
-            cropL: updatedKeyframes.cropL && updatedKeyframes.cropL.length > 0 ? null : Number(tempSegmentValues.cropL) || 0,
-            cropR: updatedKeyframes.cropR && updatedKeyframes.cropR.length > 0 ? null : Number(tempSegmentValues.cropR) || 0,
-            cropT: updatedKeyframes.cropT && updatedKeyframes.cropT.length > 0 ? null : Number(tempSegmentValues.cropT) || 0,
-            cropB: updatedKeyframes.cropB && updatedKeyframes.cropB.length > 0 ? null : Number(tempSegmentValues.cropB) || 0,
+            cropL: normalizedImageValues.cropL, // Always include crop values
+            cropR: normalizedImageValues.cropR,
+            cropT: normalizedImageValues.cropT,
+            cropB: normalizedImageValues.cropB,
             keyframes: updatedKeyframes || {},
-            filters: imageFiltersMap,
+            filters: Array.isArray(appliedFilters)
+              ? appliedFilters.reduce((map, filter) => {
+                  if (filter.filterName && filter.filterValue !== undefined) {
+                    map[filter.filterName] = String(filter.filterValue);
+                  }
+                  return map;
+                }, {})
+              : {},
             filtersToRemove: [],
           };
   
-          // Validate payload
-          if (!payload.segmentId) {
-            console.error('Invalid segmentId:', payload.segmentId);
-            throw new Error('segmentId is required');
+          // Validate crop values
+          const imageCropValues = [payload.cropL, payload.cropR, payload.cropT, payload.cropB];
+          if (imageCropValues.some(val => val === undefined || val === null || isNaN(val) || val < 0 || val > 100)) {
+            console.error('Invalid crop values in image payload:', imageCropValues);
+            throw new Error('Crop values must be valid numbers between 0 and 100');
           }
-          const cropValues = [payload.cropL, payload.cropR, payload.cropT, payload.cropB];
-          if (cropValues.some(val => val !== null && (isNaN(val) || val < 0 || val > 100))) {
-            console.error('Invalid crop values:', cropValues);
-            throw new Error('Crop values must be numbers between 0 and 100');
-          }
-          if (payload.cropL !== null && payload.cropR !== null && payload.cropL + payload.cropR >= 100) {
+          if (payload.cropL + payload.cropR >= 100) {
             console.error('Crop left + right exceeds 100%:', payload.cropL, payload.cropR);
             throw new Error('Total crop (left + right) must be less than 100%');
           }
-          if (payload.cropT !== null && payload.cropB !== null && payload.cropT + payload.cropB >= 100) {
+          if (payload.cropT + payload.cropB >= 100) {
             console.error('Crop top + bottom exceeds 100%:', payload.cropT, payload.cropB);
             throw new Error('Total crop (top + bottom) must be less than 100%');
           }
   
-          console.log('Saving image segment payload:', JSON.stringify(payload, null, 2));
-          await axios.put(
+          console.log('Image segment payload:', JSON.stringify(payload, null, 2));
+  
+          const imageResponse = await axios.put(
             `${API_BASE_URL}/projects/${projectId}/update-image`,
             payload,
             { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
           );
+          console.log('Server response for image segment update:', imageResponse.data);
   
           // Update videoLayers
           setVideoLayers((prev) => {
@@ -2944,14 +2913,14 @@ const ProjectEditor = () => {
             if (segmentIndex !== -1) {
               newLayers[layerIndex][segmentIndex] = {
                 ...newLayers[layerIndex][segmentIndex],
-                cropL: payload.cropL !== null ? payload.cropL : newLayers[layerIndex][segmentIndex].cropL || 0,
-                cropR: payload.cropR !== null ? payload.cropR : newLayers[layerIndex][segmentIndex].cropR || 0,
-                cropT: payload.cropT !== null ? payload.cropT : newLayers[layerIndex][segmentIndex].cropT || 0,
-                cropB: payload.cropB !== null ? payload.cropB : newLayers[layerIndex][segmentIndex].cropB || 0,
-                positionX: payload.positionX !== null ? payload.positionX : newLayers[layerIndex][segmentIndex].positionX || 0,
-                positionY: payload.positionY !== null ? payload.positionY : newLayers[layerIndex][segmentIndex].positionY || 0,
-                scale: payload.scale !== null ? payload.scale : newLayers[layerIndex][segmentIndex].scale || 1,
-                opacity: payload.opacity !== null ? payload.opacity : newLayers[layerIndex][segmentIndex].opacity || 1,
+                cropL: payload.cropL,
+                cropR: payload.cropR,
+                cropT: payload.cropT,
+                cropB: payload.cropB,
+                positionX: payload.positionX !== undefined ? payload.positionX : newLayers[layerIndex][segmentIndex].positionX || 0,
+                positionY: payload.positionY !== undefined ? payload.positionY : newLayers[layerIndex][segmentIndex].positionY || 0,
+                scale: payload.scale !== undefined ? payload.scale : newLayers[layerIndex][segmentIndex].scale || 1,
+                opacity: payload.opacity !== undefined ? payload.opacity : newLayers[layerIndex][segmentIndex].opacity || 1,
                 startTime: payload.timelineStartTime,
                 duration: payload.timelineEndTime - payload.timelineStartTime,
                 layer: payload.layer,
@@ -2963,18 +2932,70 @@ const ProjectEditor = () => {
           });
           break;
   
+        case 'text':
+          await axios.put(
+            `${API_BASE_URL}/projects/${projectId}/update-text`,
+            {
+              segmentId: selectedSegment.id,
+              text: textSettings.text,
+              fontFamily: textSettings.fontFamily,
+              fontColor: textSettings.fontColor,
+              backgroundColor: textSettings.backgroundColor,
+              timelineStartTime: selectedSegment.startTime,
+              timelineEndTime: selectedSegment.startTime + textSettings.duration,
+              layer: selectedSegment.layer,
+              scale:
+              updatedKeyframes.scale && updatedKeyframes.scale.length > 0
+                ? undefined
+                : tempSegmentValues.scale,
+              positionX:
+                updatedKeyframes.positionX && updatedKeyframes.positionX.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionX,
+              positionY:
+                updatedKeyframes.positionY && updatedKeyframes.positionY.length > 0
+                  ? undefined
+                  : tempSegmentValues.positionY,
+              opacity: updatedKeyframes.opacity && updatedKeyframes.opacity.length > 0 ? undefined : tempSegmentValues.opacity,
+              keyframes: updatedKeyframes,
+            },
+            { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+          );
+          break;
+  
+        case 'audio':
+          await axios.put(
+            `${API_BASE_URL}/projects/${projectId}/update-audio`,
+            {
+              audioSegmentId: selectedSegment.id,
+              volume:
+                updatedKeyframes.volume && updatedKeyframes.volume.length > 0 ? undefined : tempSegmentValues.volume,
+              keyframes: updatedKeyframes,
+            },
+            { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+          );
+          break;
+  
         default:
-          console.warn('Unsupported segment type:', selectedSegment.type);
-          return;
+          break;
       }
   
       // Update history after successful save
       saveHistory();
+  
+      // Refresh keyframes after saving
+      await fetchKeyframes(selectedSegment.id, selectedSegment.type);
+      await fetchTransitions();
+      preloadMedia();
     } catch (error) {
       console.error('Error saving segment changes:', error);
+      if (error.response) {
+        console.error('Server error details:', error.response.data); // Log server error details
+      }
       throw error;
     }
   };
+
   const handlePhotoUpload = async (event) => {
       const files = Array.from(event.target.files);
       if (files.length === 0) return;
