@@ -146,6 +146,22 @@
   font-size: 0.8rem;
   margin-top: 0.2rem;
   margin-bottom: 0.5rem;
+  padding: 8px;
+  background-color: rgba(255, 68, 68, 0.1);
+  border-radius: 4px;
+  text-align: center;
+}
+
+/* New success-message class */
+.success-message {
+  color: #00c4cc; /* Teal to match auth-button */
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+  margin-bottom: 0.5rem;
+  padding: 8px;
+  background-color: rgba(0, 196, 204, 0.1); /* Subtle teal background */
+  border-radius: 4px;
+  text-align: center;
 }
 
 .auth-input.error {
