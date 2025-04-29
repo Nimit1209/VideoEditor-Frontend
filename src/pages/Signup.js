@@ -12,14 +12,14 @@ const Signup = () => {
 
   const validate = () => {
     const newErrors = {};
-    
+
     // Email validation
     if (!email) {
       newErrors.email = "Email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       newErrors.email = "Please enter a valid email address";
     }
-    
+
     // Password validation
     if (!password) {
       newErrors.password = "Password is required";
@@ -28,7 +28,7 @@ const Signup = () => {
     } else if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
       newErrors.password = "Password must contain both letters and numbers";
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -36,13 +36,13 @@ const Signup = () => {
   const handleSignup = async (e) => {
     e.preventDefault();
     if (!validate()) return;
-    
+
     try {
       const response = await axios.post("http://localhost:8080/auth/register", {
         email,
         password,
       });
-      
+
       if (response.data.message) {
         setShowVerificationMessage(true);
       }
@@ -104,7 +104,7 @@ const Signup = () => {
           <p>Professional Video Editing</p>
         </div>
         <h2>Signup</h2>
-        
+
         {showVerificationMessage ? (
           <div className="verification-message">
             <p>We've sent a verification email to {email}</p>
@@ -127,7 +127,7 @@ const Signup = () => {
             className={`auth-input ${errors.email ? 'error' : ''}`}
           />
           {errors.email && <div className="error-message">{errors.email}</div>}
-          
+
           <input
             type="password"
             placeholder="Password"
@@ -136,7 +136,7 @@ const Signup = () => {
             className={`auth-input ${errors.password ? 'error' : ''}`}
           />
           {errors.password && <div className="error-message">{errors.password}</div>}
-          
+
           <button type="submit" className="auth-button">Sign Up</button>
         </form>
             <div className="divider">OR</div>
