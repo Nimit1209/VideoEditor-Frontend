@@ -1,4 +1,5 @@
 import React from 'react';
+import '../CSS/Timeline.css';
 
 const TimelineLayer = ({
   layer,
@@ -10,8 +11,26 @@ const TimelineLayer = ({
   handleVideoSelect,
   handleEditTextSegment,
   selectedSegmentId,
+  transitions,
+  onTransitionSelect,
 }) => {
-  const isAudioLayer = layer.some(item => item.type === 'audio');
+  const isAudioLayer = layer.some((item) => item.type === 'audio');
+
+  const getTransitionPosition = (transition, segmentStartTime, segmentDuration) => {
+    let relativeLeft;
+    if (transition.start && !transition.end) {
+      relativeLeft = 0;
+    } else if (transition.end && !transition.start) {
+      relativeLeft = (segmentDuration - transition.duration) * timeScale;
+    } else {
+      relativeLeft = 0;
+    }
+    return {
+      left: relativeLeft,
+      width: transition.duration * timeScale,
+      transition,
+    };
+  };
 
   return (
     <div className="layer">
@@ -35,9 +54,14 @@ const TimelineLayer = ({
           };
           const isSelected = item.id === selectedSegmentId;
 
+          const itemTransitions = transitions.filter(
+            (t) => t.segmentId === item.id && t.layer === layerIndex
+          );
+
           return (
             <div
               key={item.id}
+              data-id={item.id} // Added data-id attribute
               className={`timeline-item ${
                 item.type === 'text'
                   ? 'text-segment'
@@ -109,6 +133,40 @@ const TimelineLayer = ({
                   }}
                 />
               )}
+              {itemTransitions.map((transition) => {
+                const pos = getTransitionPosition(transition, item.startTime, item.duration);
+                if (!pos) return null;
+                const isCrossDissolve = transition.type === 'CrossDissolve';
+                return (
+                  <div
+                    key={transition.id}
+                    className="transition-overlay"
+                    style={{
+                      left: `${pos.left}px`,
+                      width: `${pos.width}px`,
+                      height: '20px',
+                      background: isCrossDissolve
+                        ? 'linear-gradient(to right, rgba(0, 255, 255, 0.5), rgba(0, 255, 255, 0))'
+                        : 'rgba(0, 255, 255, 0.5)',
+                      position: 'absolute',
+                      top: '0',
+                      zIndex: index + 100,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTransitionSelect(transition);
+                    }}
+                    onDragStart={(e) => e.preventDefault()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <span className="transition-label">{transition.type}</span>
+                  </div>
+                );
+              })}
             </div>
           );
         })}
