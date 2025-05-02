@@ -85,7 +85,7 @@ const ImageSegmentHandler = ({
       );
       const segment = response.data;
       console.log('addImageToTimeline response:', JSON.stringify(segment, null, 2));
-  
+
       const effectiveIsElement = segment.element !== undefined ? segment.element : isElement;
       const thumbnail = await generateImageThumbnail(imageFileName, effectiveIsElement);
       const newSegment = {
@@ -110,11 +110,11 @@ const ImageSegmentHandler = ({
         timelineStartTime: roundedStartTime,
         timelineEndTime: roundedEndTime,
       };
-  
+
       setVideoLayers((prev) => {
         const newLayers = [...prev];
         while (newLayers.length <= layer) newLayers.push([]);
-  
+
         // Check if a segment with the same ID already exists in any layer
         let existingLayerIndex = -1;
         let existingSegment = null;
@@ -126,7 +126,7 @@ const ImageSegmentHandler = ({
             break;
           }
         }
-  
+
         if (existingSegment) {
           console.warn(`Segment with ID ${newSegment.id} already exists in layer ${existingLayerIndex}. Updating instead.`);
           // Update existing segment
@@ -137,10 +137,10 @@ const ImageSegmentHandler = ({
           // Add new segment
           newLayers[layer].push(newSegment);
         }
-  
+
         return newLayers;
       });
-  
+
       saveHistory(videoLayers, audioLayers);
       autoSave(videoLayers, audioLayers);
       return newSegment;
@@ -355,16 +355,16 @@ const ImageSegmentHandler = ({
   const handleImageSplit = async (item, clickTime, layerIndex) => {
     console.log('handleImageSplit item:', JSON.stringify(item, null, 2));
     console.log('videoLayers state:', JSON.stringify(videoLayers, null, 2));
-  
+
     const splitTime = clickTime - item.startTime;
     if (splitTime <= 0.1 || splitTime >= item.duration - 0.1) {
       console.warn('Split time is too close to segment boundaries:', { splitTime, duration: item.duration });
       return;
     }
-  
+
     const firstPartDuration = splitTime;
     const secondPartDuration = item.duration - splitTime;
-  
+
     const isElement = item.isElement !== undefined
       ? item.isElement
       : item.filePath.includes('elements/');
@@ -377,16 +377,16 @@ const ImageSegmentHandler = ({
       secondPartDuration,
       itemId: item.id,
     });
-  
+
     let newVideoLayers = [...videoLayers];
     const layer = newVideoLayers[layerIndex];
     const itemIndex = layer.findIndex((i) => i.id === item.id);
-  
+
     if (itemIndex === -1) {
       console.error('Item not found in layer:', item.id);
       return;
     }
-  
+
     const firstPart = {
       ...item,
       duration: firstPartDuration,
@@ -394,7 +394,7 @@ const ImageSegmentHandler = ({
       isElement,
     };
     layer[itemIndex] = firstPart;
-  
+
     const temporarySecondPartId = `${item.id}-split-${Date.now()}`;
     const secondPart = {
       ...item,
@@ -406,11 +406,11 @@ const ImageSegmentHandler = ({
       isElement,
     };
     layer.push(secondPart);
-  
+
     newVideoLayers[layerIndex] = layer;
     setVideoLayers(newVideoLayers);
     saveHistory(newVideoLayers, audioLayers);
-  
+
     try {
       await updateImageSegment(item.id, roundToThreeDecimals(item.startTime), layerIndex, firstPartDuration, {
         isElement,
@@ -432,7 +432,7 @@ const ImageSegmentHandler = ({
       }
       return;
     }
-  
+
     const imageFileName = item.fileName;
     try {
       // Remove the temporary second part before adding the new segment
@@ -441,7 +441,7 @@ const ImageSegmentHandler = ({
         newLayers[layerIndex] = newLayers[layerIndex].filter((s) => s.id !== temporarySecondPartId);
         return newLayers;
       });
-  
+
       const newSegment = await addImageToTimeline(
         imageFileName,
         layerIndex,
@@ -450,7 +450,7 @@ const ImageSegmentHandler = ({
         isElement
       );
       console.log('Successfully added second part to timeline:', newSegment);
-  
+
       // The addImageToTimeline function already handles duplicate IDs, so no further replacement is needed
       saveHistory(videoLayers, []);
     } catch (error) {
@@ -466,7 +466,7 @@ const ImageSegmentHandler = ({
       }
       return;
     }
-  
+
     autoSave(videoLayers, []);
   };
 

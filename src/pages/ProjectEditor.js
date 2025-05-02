@@ -10,6 +10,7 @@ import AudioSegmentHandler from './AudioSegmentHandler';
 import KeyframeControls from './KeyframeControls';
 import FilterControls from './FilterControls';
 import TransitionsPanel from './TransitionsPanel';
+import { v4 as uuidv4 } from 'uuid';
 
 const API_BASE_URL = 'http://localhost:8080';
   const defaultTextStyles = [
@@ -26,7 +27,8 @@ const API_BASE_URL = 'http://localhost:8080';
       backgroundOpacity: 1.0,
       backgroundBorderWidth: 0,
       backgroundBorderColor: "#f1ffbd",
-      backgroundPadding: 10,
+      backgroundH: 20, // Add this
+      backgroundW: 100, // Add this
       backgroundBorderRadius: 9,
       duration: 5,
     },
@@ -43,7 +45,8 @@ const API_BASE_URL = 'http://localhost:8080';
       backgroundOpacity: 0.21,
       backgroundBorderWidth: 0,
       backgroundBorderColor: "#000000",
-      backgroundPadding: 12,
+      backgroundH: 20, // Add this
+      backgroundW: 100, // Add this
       backgroundBorderRadius: 10,
       duration: 5,
     },
@@ -60,7 +63,8 @@ const API_BASE_URL = 'http://localhost:8080';
       backgroundOpacity: 1.0,
       backgroundBorderWidth: 0,
       backgroundBorderColor: "#000000",
-      backgroundPadding: 10,
+      backgroundH: 20, // Add this
+      backgroundW: 100, // Add this
       backgroundBorderRadius: 10,
       duration: 5,
     },
@@ -102,7 +106,8 @@ const ProjectEditor = () => {
     backgroundOpacity: 1.0,
     backgroundBorderWidth: 0,
     backgroundBorderColor: '#000000',
-    backgroundPadding: 0,
+    backgroundH: 0, // Add this
+    backgroundW: 0, // Add this
     backgroundBorderRadius: 0,
   });
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
@@ -514,145 +519,44 @@ const ProjectEditor = () => {
     return layers.length;
   };
 
-  const handleAudioDrop = async (audio, layer, timelineStartTime) => {
-    if (uploading) return;
-    try {
-      const token = localStorage.getItem('token');
-      if (!sessionId || !projectId || !token) {
-        throw new Error('Missing sessionId, projectId, or token');
-      }
-
-      const duration = audio.duration || 5;
-      const backendLayer = -(layer + 1);
-      const selectedLayerIndex = layer;
-
-      const newSegment = {
-        id: `temp-${Date.now()}`,
-        type: 'audio',
-        fileName: audio.fileName,
-        audioPath: `${API_BASE_URL}/projects/${projectId}/audio/${encodeURIComponent(audio.fileName)}`,
-        displayName: audio.displayName || audio.fileName.split('/').pop(),
-        waveformImage: audio.waveformImage || '/images/audio.jpeg',
-        startTime: roundToThreeDecimals(timelineStartTime),
-        duration: duration,
-        layer: backendLayer,
-        volume: 1.0,
-        startTimeWithinAudio: 0,
-        endTimeWithinAudio: duration,
-        timelineStartTime: roundToThreeDecimals(timelineStartTime),
-        timelineEndTime: roundToThreeDecimals(timelineStartTime + duration),
-        keyframes: {},
-      };
-
-      let updatedAudioLayers = audioLayers;
-      setAudioLayers((prevLayers) => {
-        const newLayers = [...prevLayers];
-        while (newLayers.length <= selectedLayerIndex) newLayers.push([]);
-        newLayers[selectedLayerIndex].push(newSegment);
-        updatedAudioLayers = newLayers;
-        return newLayers;
+  const handleElementClick = async (element, isDragEvent = false) => {
+      if (uploading || isDragEvent) return;
+      try {
+      let endTime = 0;
+      videoLayers.forEach((layer) => {
+      layer.forEach((segment) => {
+      const segmentEndTime = segment.startTime + segment.duration;
+      if (segmentEndTime > endTime) endTime = segmentEndTime;
       });
+      });
+      const timelineStartTime = endTime;
+      const duration = 5;
+      const selectedLayer = findAvailableLayer(timelineStartTime, timelineStartTime + duration, videoLayers);
+
+      // Use ImageSegmentHandler's addImageToTimeline
+      const newSegment = await addImageToTimeline(
+      element.fileName,
+      selectedLayer,
+      roundToThreeDecimals(timelineStartTime),
+      roundToThreeDecimals(timelineStartTime + duration),
+      true // isElement
+      );
 
       setTotalDuration((prev) => Math.max(prev, timelineStartTime + duration));
       preloadMedia();
       saveHistory();
 
-      const response = await axios.post(
-        `${API_BASE_URL}/projects/${projectId}/add-project-audio-to-timeline`,
-        {
-          audioFileName: audio.fileName,
-          layer: backendLayer,
-          timelineStartTime: roundToThreeDecimals(timelineStartTime),
-          timelineEndTime: roundToThreeDecimals(timelineStartTime + duration),
-          startTime: roundToThreeDecimals(0),
-          endTime: roundToThreeDecimals(duration),
-          volume: 1.0,
-        },
-        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
-      );
+      if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+      updateTimeoutRef.current = setTimeout(() => {
+      autoSaveProject(videoLayers, audioLayers);
+      }, 1000);
+      } catch (error) {
+      console.error('Error adding element to timeline:', error);
+      alert('Failed to add element to timeline. Please try again.');
+      }
+     };
 
-      const newAudioSegment = response.data;
-
-      setAudioLayers((prevLayers) => {
-        const newLayers = [...prevLayers];
-        newLayers[selectedLayerIndex] = newLayers[selectedLayerIndex].map((item) =>
-          item.id === newSegment.id
-            ? {
-                ...item,
-                id: newAudioSegment.id || item.id,
-                volume: newAudioSegment.volume || 1.0,
-                keyframes: newAudioSegment.keyframes || {},
-                startTimeWithinAudio: roundToThreeDecimals(newAudioSegment.startTime || 0),
-                endTimeWithinAudio: roundToThreeDecimals(newAudioSegment.endTime || duration),
-                duration: roundToThreeDecimals(newAudioSegment.timelineEndTime - newAudioSegment.timelineStartTime),
-                timelineStartTime: roundToThreeDecimals(newAudioSegment.timelineStartTime),
-                timelineEndTime: roundToThreeDecimals(newAudioSegment.timelineEndTime),
-              }
-            : item
-        );
-        updatedAudioLayers = newLayers;
-        return newLayers;
-      });
-
-      autoSaveProject(videoLayers, updatedAudioLayers);
-    } catch (error) {
-      console.error('Error adding audio to timeline via drop:', error.response?.data || error.message);
-      setAudioLayers((prevLayers) => {
-        const newLayers = [...prevLayers];
-        newLayers.forEach((layer, index) => {
-          newLayers[index] = layer.filter((item) => !item.id.startsWith('temp-'));
-        });
-        return newLayers;
-      });
-      let maxEndTime = 0;
-      [...videoLayers, ...audioLayers].forEach((layer) => {
-        layer.forEach((item) => {
-          const endTime = item.startTime + item.duration;
-          if (endTime > maxEndTime) maxEndTime = endTime;
-        });
-      });
-      setTotalDuration(maxEndTime);
-      alert('Failed to add audio to timeline. Please try again.');
-    }
-  };
-
-  const handleElementClick = async (element, isDragEvent = false) => {
-    if (uploading || isDragEvent) return;
-    try {
-    let endTime = 0;
-    videoLayers.forEach((layer) => {
-    layer.forEach((segment) => {
-    const segmentEndTime = segment.startTime + segment.duration;
-    if (segmentEndTime > endTime) endTime = segmentEndTime;
-    });
-    });
-    const timelineStartTime = endTime;
-    const duration = 5;
-    const selectedLayer = findAvailableLayer(timelineStartTime, timelineStartTime + duration, videoLayers);
-   
-    // Use ImageSegmentHandler's addImageToTimeline
-    const newSegment = await addImageToTimeline(
-    element.fileName,
-    selectedLayer,
-    roundToThreeDecimals(timelineStartTime),
-    roundToThreeDecimals(timelineStartTime + duration),
-    true // isElement
-    );
-   
-    setTotalDuration((prev) => Math.max(prev, timelineStartTime + duration));
-    preloadMedia();
-    saveHistory();
-   
-    if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
-    updateTimeoutRef.current = setTimeout(() => {
-    autoSaveProject(videoLayers, audioLayers);
-    }, 1000);
-    } catch (error) {
-    console.error('Error adding element to timeline:', error);
-    alert('Failed to add element to timeline. Please try again.');
-    }
-   };
-  const handleAudioClick = async (audio, isDragEvent = false) => {
+  const handleAudioClick = debounce(async (audio, isDragEvent = false) => {
     if (uploading || isDragEvent) return;
     try {
       const token = localStorage.getItem('token');
@@ -705,8 +609,11 @@ const ProjectEditor = () => {
 
       const backendLayer = -(selectedLayerIndex + 1);
 
+      // Use UUID for temporary ID
+      const tempId = `temp-${uuidv4()}`;
+
       const newSegment = {
-        id: `temp-${Date.now()}`,
+        id: tempId,
         type: 'audio',
         fileName: audio.fileName,
         audioPath: `${API_BASE_URL}/projects/${projectId}/audio/${encodeURIComponent(audio.fileName)}`,
@@ -752,13 +659,18 @@ const ProjectEditor = () => {
 
       const newAudioSegment = response.data;
 
+      // Validate response
+      if (!newAudioSegment.audioSegmentId) {
+        throw new Error('Backend did not return audioSegmentId');
+      }
+
       setAudioLayers((prevLayers) => {
         const newLayers = [...prevLayers];
         newLayers[selectedLayerIndex] = newLayers[selectedLayerIndex].map((item) =>
-          item.id === newSegment.id
+          item.id === tempId
             ? {
                 ...item,
-                id: newAudioSegment.id || item.id,
+                id: newAudioSegment.audioSegmentId,
                 volume: newAudioSegment.volume || 1.0,
                 keyframes: newAudioSegment.keyframes || {},
                 startTimeWithinAudio: roundToThreeDecimals(newAudioSegment.startTime || 0),
@@ -766,6 +678,7 @@ const ProjectEditor = () => {
                 duration: roundToThreeDecimals(newAudioSegment.timelineEndTime - newAudioSegment.timelineStartTime),
                 timelineStartTime: roundToThreeDecimals(newAudioSegment.timelineStartTime),
                 timelineEndTime: roundToThreeDecimals(newAudioSegment.timelineEndTime),
+                layer: newAudioSegment.layer || backendLayer,
               }
             : item
         );
@@ -793,7 +706,7 @@ const ProjectEditor = () => {
       setTotalDuration(maxEndTime);
       alert('Failed to add audio to timeline. Please try again.');
     }
-  };
+  }, 300);
 
   const toggleTransitionsPanel = () => {
     setIsTransitionsOpen((prev) => !prev);
@@ -1019,7 +932,8 @@ const ProjectEditor = () => {
                 backgroundOpacity: newSettings.backgroundOpacity,
                 backgroundBorderWidth: newSettings.backgroundBorderWidth,
                 backgroundBorderColor: newSettings.backgroundBorderColor,
-                backgroundPadding: newSettings.backgroundPadding,
+                backgroundH: newSettings.backgroundH, // Replace backgroundPadding
+                backgroundW: newSettings.backgroundW, // Replace backgroundPadding
                 backgroundBorderRadius: newSettings.backgroundBorderRadius,
               }
             : item
@@ -1055,7 +969,8 @@ const ProjectEditor = () => {
         backgroundOpacity: textSettings.backgroundOpacity,
         backgroundBorderWidth: textSettings.backgroundBorderWidth,
         backgroundBorderColor: textSettings.backgroundBorderColor,
-        backgroundPadding: textSettings.backgroundPadding,
+        backgroundH: textSettings.backgroundH, // Replace backgroundPadding
+        backgroundW: textSettings.backgroundW, // Replace backgroundPadding
         backgroundBorderRadius: textSettings.backgroundBorderRadius,
         keyframes: keyframes,
       };
@@ -1077,7 +992,8 @@ const ProjectEditor = () => {
           backgroundOpacity: updatedTextSegment.backgroundOpacity,
           backgroundBorderWidth: updatedTextSegment.backgroundBorderWidth,
           backgroundBorderColor: updatedTextSegment.backgroundBorderColor,
-          backgroundPadding: updatedTextSegment.backgroundPadding,
+          backgroundH: updatedTextSegment.backgroundH, // Replace backgroundPadding
+          backgroundW: updatedTextSegment.backgroundW, // Replace backgroundPadding
           backgroundBorderRadius: updatedTextSegment.backgroundBorderRadius,
           keyframes: updatedTextSegment.keyframes,
         },
@@ -1113,34 +1029,14 @@ const ProjectEditor = () => {
         startTime = Math.max(startTime, lastSegment.startTime + lastSegment.duration);
       }
       const duration = textSettings.duration;
-      const response = await axios.post(
-        `${API_BASE_URL}/projects/${projectId}/add-text`,
-        {
-          text: textSettings.text,
-          layer: 0,
-          timelineStartTime: startTime,
-          timelineEndTime: startTime + duration,
-          fontFamily: textSettings.fontFamily,
-          scale: textSettings.scale || 1.0,
-          fontColor: textSettings.fontColor,
-          backgroundColor: textSettings.backgroundColor,
-          positionX: 0,
-          positionY: 0,
-          alignment: textSettings.alignment,
-          backgroundOpacity: textSettings.backgroundOpacity,
-          backgroundBorderWidth: textSettings.backgroundBorderWidth,
-          backgroundBorderColor: textSettings.backgroundBorderColor,
-          backgroundPadding: textSettings.backgroundPadding,
-          backgroundBorderRadius: textSettings.backgroundBorderRadius,
-        },
-        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
-      );
-      const newTextSegment = response.data;
-      const newSegment = {
-        id: newTextSegment.id,
+
+      // Create temporary segment with UUID
+      const tempSegmentId = `temp-${uuidv4()}`;
+      const tempSegment = {
+        id: tempSegmentId,
         type: 'text',
         text: textSettings.text,
-        startTime: startTime,
+        startTime: roundToThreeDecimals(startTime),
         duration: duration,
         layer: 0,
         fontFamily: textSettings.fontFamily,
@@ -1153,35 +1049,103 @@ const ProjectEditor = () => {
         backgroundOpacity: textSettings.backgroundOpacity,
         backgroundBorderWidth: textSettings.backgroundBorderWidth,
         backgroundBorderColor: textSettings.backgroundBorderColor,
-        backgroundPadding: textSettings.backgroundPadding,
+        backgroundH: textSettings.backgroundH,
+        backgroundW: textSettings.backgroundW,
         backgroundBorderRadius: textSettings.backgroundBorderRadius,
+        keyframes: {},
       };
 
-      let updatedVideoLayers = videoLayers; // Store updated layers for auto-save
+      // Add temporary segment to videoLayers for instant rendering
+      let updatedVideoLayers = videoLayers;
       setVideoLayers((prevLayers) => {
         const newLayers = [...prevLayers];
-        newLayers[0].push(newSegment);
-        updatedVideoLayers = newLayers; // Update the variable for auto-save
+        newLayers[0] = [...(newLayers[0] || []), tempSegment];
+        updatedVideoLayers = newLayers;
+        return newLayers;
+      });
+
+      // Make API call
+      const response = await axios.post(
+        `${API_BASE_URL}/projects/${projectId}/add-text`,
+        {
+          text: textSettings.text,
+          layer: 0,
+          timelineStartTime: roundToThreeDecimals(startTime),
+          timelineEndTime: roundToThreeDecimals(startTime + duration),
+          fontFamily: textSettings.fontFamily,
+          scale: textSettings.scale || 1.0,
+          fontColor: textSettings.fontColor,
+          backgroundColor: textSettings.backgroundColor,
+          positionX: 0,
+          positionY: 0,
+          alignment: textSettings.alignment,
+          backgroundOpacity: textSettings.backgroundOpacity,
+          backgroundBorderWidth: textSettings.backgroundBorderWidth,
+          backgroundBorderColor: textSettings.backgroundBorderColor,
+          backgroundH: textSettings.backgroundH,
+          backgroundW: textSettings.backgroundW,
+          backgroundBorderRadius: textSettings.backgroundBorderRadius,
+        },
+        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const newTextSegment = response.data;
+
+      // Validate response
+      if (!newTextSegment.textSegmentId) {
+        throw new Error('Backend did not return textSegmentId');
+      }
+
+      // Update temporary segment with backend data
+      const updatedSegment = {
+        id: newTextSegment.textSegmentId,
+        type: 'text',
+        text: newTextSegment.text,
+        startTime: roundToThreeDecimals(newTextSegment.timelineStartTime),
+        duration: roundToThreeDecimals(newTextSegment.timelineEndTime - newTextSegment.timelineStartTime),
+        layer: newTextSegment.layer,
+        fontFamily: newTextSegment.fontFamily,
+        scale: newTextSegment.scale || 1.0,
+        fontColor: newTextSegment.fontColor,
+        backgroundColor: newTextSegment.backgroundColor,
+        positionX: newTextSegment.positionX || 0,
+        positionY: newTextSegment.positionY || 0,
+        alignment: newTextSegment.alignment,
+        backgroundOpacity: newTextSegment.backgroundOpacity ?? 1.0,
+        backgroundBorderWidth: newTextSegment.backgroundBorderWidth ?? 0,
+        backgroundBorderColor: newTextSegment.backgroundBorderColor || '#000000',
+        backgroundH: newTextSegment.backgroundH ?? 0,
+        backgroundW: newTextSegment.backgroundW ?? 0,
+        backgroundBorderRadius: newTextSegment.backgroundBorderRadius ?? 0,
+        keyframes: newTextSegment.keyframes || {},
+      };
+
+      setVideoLayers((prevLayers) => {
+        const newLayers = [...prevLayers];
+        newLayers[0] = newLayers[0].map((item) =>
+          item.id === tempSegmentId ? updatedSegment : item
+        );
+        updatedVideoLayers = newLayers;
         return newLayers;
       });
 
       setTotalDuration((prev) => Math.max(prev, startTime + duration));
-      setSelectedSegment(newSegment);
-      setEditingTextSegment(newSegment);
+      setSelectedSegment(updatedSegment);
+      setEditingTextSegment(updatedSegment);
       setTextSettings({
-        text: newSegment.text,
-        fontFamily: newSegment.fontFamily,
-        scale: newSegment.scale,
-        fontColor: newSegment.fontColor,
-        backgroundColor: newSegment.backgroundColor,
-        duration: newSegment.duration,
-        alignment: newSegment.alignment,
-        backgroundOpacity: newSegment.backgroundOpacity,
-        backgroundBorderWidth: newSegment.backgroundBorderWidth,
-        backgroundBorderColor: newSegment.backgroundBorderColor,
-        backgroundPadding: newSegment.backgroundPadding,
-        backgroundBorderRadius: newSegment.backgroundBorderRadius,
-        keyframes: newSegment.keyframes,
+        text: updatedSegment.text,
+        fontFamily: updatedSegment.fontFamily,
+        scale: updatedSegment.scale,
+        fontColor: updatedSegment.fontColor,
+        backgroundColor: updatedSegment.backgroundColor,
+        duration: updatedSegment.duration,
+        alignment: updatedSegment.alignment,
+        backgroundOpacity: updatedSegment.backgroundOpacity,
+        backgroundBorderWidth: updatedSegment.backgroundBorderWidth,
+        backgroundBorderColor: updatedSegment.backgroundBorderColor,
+        backgroundH: updatedSegment.backgroundH,
+        backgroundW: updatedSegment.backgroundW,
+        backgroundBorderRadius: updatedSegment.backgroundBorderRadius,
       });
       setIsTextToolOpen(true);
       preloadMedia();
@@ -1901,8 +1865,7 @@ const ProjectEditor = () => {
     if (!sessionId || !projectId || uploading) return;
     try {
       const token = localStorage.getItem('token');
-      let startTime = roundToThreeDecimals(currentTime); // Use currentTime with precision
-      // Find the latest end time across all video layers to avoid overlap
+      let startTime = roundToThreeDecimals(currentTime);
       let maxEndTime = 0;
       videoLayers.forEach((layer) => {
         layer.forEach((segment) => {
@@ -1913,6 +1876,42 @@ const ProjectEditor = () => {
       startTime = Math.max(startTime, maxEndTime);
 
       const duration = style.duration || 5;
+
+      // Create temporary segment with UUID
+      const tempSegmentId = `temp-${uuidv4()}`;
+      const tempSegment = {
+        id: tempSegmentId,
+        type: 'text',
+        text: style.text,
+        startTime: roundToThreeDecimals(startTime),
+        duration: duration,
+        layer: 0,
+        fontFamily: style.fontFamily || 'Arial',
+        scale: style.scale || 1.0,
+        fontColor: style.fontColor || '#FFFFFF',
+        backgroundColor: style.backgroundColor || 'transparent',
+        positionX: style.positionX || 0,
+        positionY: style.positionY || 0,
+        alignment: style.alignment || 'center',
+        backgroundOpacity: style.backgroundOpacity ?? 1.0,
+        backgroundBorderWidth: style.backgroundBorderWidth ?? 0,
+        backgroundBorderColor: style.backgroundBorderColor || '#000000',
+        backgroundH: style.backgroundH ?? 0,
+        backgroundW: style.backgroundW ?? 0,
+        backgroundBorderRadius: style.backgroundBorderRadius ?? 0,
+        keyframes: {},
+      };
+
+      // Add temporary segment to videoLayers
+      let updatedVideoLayers = videoLayers;
+      setVideoLayers((prevLayers) => {
+        const newLayers = [...prevLayers];
+        newLayers[0] = [...(newLayers[0] || []), tempSegment];
+        updatedVideoLayers = newLayers;
+        return newLayers;
+      });
+
+      // Make API call
       const response = await axios.post(
         `${API_BASE_URL}/projects/${projectId}/add-text`,
         {
@@ -1930,74 +1929,78 @@ const ProjectEditor = () => {
           backgroundOpacity: style.backgroundOpacity ?? 1.0,
           backgroundBorderWidth: style.backgroundBorderWidth ?? 0,
           backgroundBorderColor: style.backgroundBorderColor || '#000000',
-          backgroundPadding: style.backgroundPadding ?? 0,
+          backgroundH: style.backgroundH ?? 0,
+          backgroundW: style.backgroundW ?? 0,
           backgroundBorderRadius: style.backgroundBorderRadius ?? 0,
         },
         { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
       );
+
       const newTextSegment = response.data;
-      const newSegment = {
-        id: newTextSegment.id,
+
+      // Validate response
+      if (!newTextSegment.textSegmentId) {
+        throw new Error('Backend did not return textSegmentId');
+      }
+
+      // Update temporary segment with backend data
+      const updatedSegment = {
+        id: newTextSegment.textSegmentId,
         type: 'text',
-        text: style.text,
-        startTime: roundToThreeDecimals(startTime),
-        duration: duration,
-        layer: 0,
-        fontFamily: style.fontFamily || 'Arial',
-        scale: style.scale || 1.0,
-        fontColor: style.fontColor || '#FFFFFF',
-        backgroundColor: style.backgroundColor || 'transparent',
-        positionX: style.positionX || 0,
-        positionY: style.positionY || 0,
-        alignment: style.alignment || 'center',
-        backgroundOpacity: style.backgroundOpacity ?? 1.0,
-        backgroundBorderWidth: style.backgroundBorderWidth ?? 0,
-        backgroundBorderColor: style.backgroundBorderColor || '#000000',
-        backgroundPadding: style.backgroundPadding ?? 0,
-        backgroundBorderRadius: style.backgroundBorderRadius ?? 0,
-        keyframes: {},
+        text: newTextSegment.text,
+        startTime: roundToThreeDecimals(newTextSegment.timelineStartTime),
+        duration: roundToThreeDecimals(newTextSegment.timelineEndTime - newTextSegment.timelineStartTime),
+        layer: newTextSegment.layer,
+        fontFamily: newTextSegment.fontFamily,
+        scale: newTextSegment.scale || 1.0,
+        fontColor: newTextSegment.fontColor,
+        backgroundColor: newTextSegment.backgroundColor,
+        positionX: newTextSegment.positionX || 0,
+        positionY: newTextSegment.positionY || 0,
+        alignment: newTextSegment.alignment,
+        backgroundOpacity: newTextSegment.backgroundOpacity ?? 1.0,
+        backgroundBorderWidth: newTextSegment.backgroundBorderWidth ?? 0,
+        backgroundBorderColor: newTextSegment.backgroundBorderColor || '#000000',
+        backgroundH: newTextSegment.backgroundH ?? 0,
+        backgroundW: newTextSegment.backgroundW ?? 0,
+        backgroundBorderRadius: newTextSegment.backgroundBorderRadius ?? 0,
+        keyframes: newTextSegment.keyframes || {},
       };
 
-      // Update videoLayers and ensure the new segment is added
       setVideoLayers((prevLayers) => {
         const newLayers = [...prevLayers];
-        if (!newLayers[0]) newLayers[0] = []; // Ensure layer 0 exists
-        newLayers[0] = [...newLayers[0], newSegment]; // Append new segment
+        newLayers[0] = newLayers[0].map((item) =>
+          item.id === tempSegmentId ? updatedSegment : item
+        );
+        updatedVideoLayers = newLayers;
         return newLayers;
       });
 
-      // Update totalDuration to include the new segment's end time
-      setTotalDuration((prev) => {
-        const newEndTime = startTime + duration;
-        return Math.max(prev, roundToThreeDecimals(newEndTime));
-      });
-
-      // Set the new segment as selected and open the text tool
-      setSelectedSegment(newSegment);
-      setEditingTextSegment(newSegment);
+      setTotalDuration((prev) => Math.max(prev, startTime + duration));
+      setSelectedSegment(updatedSegment);
+      setEditingTextSegment(updatedSegment);
       setTextSettings({
-        text: newSegment.text,
-        fontFamily: newSegment.fontFamily,
-        scale: newSegment.scale,
-        fontColor: newSegment.fontColor,
-        backgroundColor: newSegment.backgroundColor,
-        duration: newSegment.duration,
-        alignment: newSegment.alignment,
-        backgroundOpacity: newSegment.backgroundOpacity,
-        backgroundBorderWidth: newSegment.backgroundBorderWidth,
-        backgroundBorderColor: newSegment.backgroundBorderColor,
-        backgroundPadding: newSegment.backgroundPadding,
-        backgroundBorderRadius: newSegment.backgroundBorderRadius,
+        text: updatedSegment.text,
+        fontFamily: updatedSegment.fontFamily,
+        scale: updatedSegment.scale,
+        fontColor: updatedSegment.fontColor,
+        backgroundColor: updatedSegment.backgroundColor,
+        duration: updatedSegment.duration,
+        alignment: updatedSegment.alignment,
+        backgroundOpacity: updatedSegment.backgroundOpacity,
+        backgroundBorderWidth: updatedSegment.backgroundBorderWidth,
+        backgroundBorderColor: updatedSegment.backgroundBorderColor,
+        backgroundH: updatedSegment.backgroundH,
+        backgroundW: updatedSegment.backgroundW,
+        backgroundBorderRadius: updatedSegment.backgroundBorderRadius,
       });
       setIsTextToolOpen(true);
-
-      // Preload media and save history
       preloadMedia();
       saveHistory();
 
-      // Trigger auto-save with updated layers
+      // Trigger auto-save
       setTimeout(() => {
-        autoSaveProject(videoLayers, audioLayers);
+        autoSaveProject(updatedVideoLayers, audioLayers);
       }, 1000);
     } catch (error) {
       console.error('Error adding text style to timeline:', error);
@@ -3621,7 +3624,7 @@ return (
                           backgroundColor: style.backgroundColor,
                           color: style.fontColor,
                           fontFamily: style.fontFamily,
-                          padding: `${style.backgroundPadding}px`,
+                          padding: `${Math.max(style.backgroundH / 2, style.backgroundW / 2)}px`, // Replace backgroundPadding
                           borderRadius: `${style.backgroundBorderRadius}px`,
                           border: `${style.backgroundBorderWidth}px solid ${style.backgroundBorderColor}`,
                           opacity: style.backgroundOpacity,
@@ -3905,11 +3908,22 @@ return (
                 />
               </div>
               <div className="control-group">
-                <label>Background Padding</label>
+                <label>Background Height</label>
                 <input
                   type="number"
-                  value={textSettings.backgroundPadding}
-                  onChange={(e) => updateTextSettings({ ...textSettings, backgroundPadding: parseInt(e.target.value) || 0 })}
+                  value={textSettings.backgroundH}
+                  onChange={(e) => updateTextSettings({ ...textSettings, backgroundH: parseInt(e.target.value) || 0 })}
+                  min="0"
+                  step="1"
+                  style={{ width: '60px' }}
+                />
+              </div>
+              <div className="control-group">
+                <label>Background Width</label>
+                <input
+                  type="number"
+                  value={textSettings.backgroundW}
+                  onChange={(e) => updateTextSettings({ ...textSettings, backgroundW: parseInt(e.target.value) || 0 })}
                   min="0"
                   step="1"
                   style={{ width: '60px' }}
