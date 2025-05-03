@@ -594,10 +594,10 @@ const ProjectEditor = () => {
       if (!sessionId || !projectId || !token) {
         throw new Error('Missing sessionId, projectId, or token');
       }
-
+  
       const duration = audio.duration || 5;
       let timelineStartTime = roundToThreeDecimals(currentTime);
-
+  
       const findAvailableLayer = (start, end, layers) => {
         for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
           const hasOverlap = layers[layerIndex].some((segment) => {
@@ -609,14 +609,14 @@ const ProjectEditor = () => {
         }
         return layers.length;
       };
-
+  
       const proposedEndTime = timelineStartTime + duration;
       let selectedLayerIndex = findAvailableLayer(timelineStartTime, proposedEndTime, audioLayers);
-
+  
       if (selectedLayerIndex >= audioLayers.length) {
         let earliestStartTime = timelineStartTime;
         let foundLayer = -1;
-
+  
         for (let layerIndex = 0; layerIndex < audioLayers.length; layerIndex++) {
           const layer = audioLayers[layerIndex];
           let layerEndTime = 0;
@@ -629,7 +629,7 @@ const ProjectEditor = () => {
             foundLayer = layerIndex;
           }
         }
-
+  
         if (foundLayer >= 0) {
           selectedLayerIndex = foundLayer;
           timelineStartTime = roundToThreeDecimals(earliestStartTime);
@@ -637,12 +637,18 @@ const ProjectEditor = () => {
           selectedLayerIndex = audioLayers.length;
         }
       }
-
+  
       const backendLayer = -(selectedLayerIndex + 1);
-
-      // Use UUID for temporary ID
-      const tempId = `temp-${uuidv4()}`;
-
+  
+      // Generate unique temporary ID
+      const doesIdExist = (id) => {
+        return audioLayers.some((layer) => layer.some((segment) => segment.id === id));
+      };
+      let tempId = `temp-${uuidv4()}`;
+      while (doesIdExist(tempId)) {
+        tempId = `temp-${uuidv4()}`;
+      }
+  
       const newSegment = {
         id: tempId,
         type: 'audio',
@@ -660,20 +666,41 @@ const ProjectEditor = () => {
         timelineEndTime: timelineStartTime + duration,
         keyframes: {},
       };
-
+  
       let updatedAudioLayers = audioLayers;
       setAudioLayers((prevLayers) => {
         const newLayers = [...prevLayers];
         while (newLayers.length <= selectedLayerIndex) newLayers.push([]);
-        newLayers[selectedLayerIndex].push(newSegment);
+  
+        // Check for existing segment with the same ID
+        let existingLayerIndex = -1;
+        let existingSegment = null;
+        for (let i = 0; i < newLayers.length; i++) {
+          const found = newLayers[i].find((s) => s.id === newSegment.id);
+          if (found) {
+            existingSegment = found;
+            existingLayerIndex = i;
+            break;
+          }
+        }
+  
+        if (existingSegment) {
+          console.warn(`Segment with ID ${newSegment.id} already exists in layer ${existingLayerIndex}. Updating instead.`);
+          newLayers[existingLayerIndex] = newLayers[existingLayerIndex].map((s) =>
+            s.id === newSegment.id ? { ...s, ...newSegment, layer: backendLayer } : s
+          );
+        } else {
+          newLayers[selectedLayerIndex].push(newSegment);
+        }
+  
         updatedAudioLayers = newLayers;
         return newLayers;
       });
-
+  
       setTotalDuration((prev) => Math.max(prev, timelineStartTime + duration));
       preloadMedia();
       saveHistory();
-
+  
       const response = await axios.post(
         `${API_BASE_URL}/projects/${projectId}/add-project-audio-to-timeline`,
         {
@@ -687,36 +714,48 @@ const ProjectEditor = () => {
         },
         { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
       );
-
+  
       const newAudioSegment = response.data;
-
-      // Validate response
+  
       if (!newAudioSegment.audioSegmentId) {
         throw new Error('Backend did not return audioSegmentId');
       }
-
+  
+      // Ensure backend ID is unique
+      let finalSegmentId = newAudioSegment.audioSegmentId;
+      if (doesIdExist(finalSegmentId)) {
+        console.warn(`Backend returned duplicate audioSegmentId ${finalSegmentId}. Generating new ID.`);
+        finalSegmentId = `${finalSegmentId}-${uuidv4()}`;
+      }
+  
       setAudioLayers((prevLayers) => {
-        const newLayers = [...prevLayers];
-        newLayers[selectedLayerIndex] = newLayers[selectedLayerIndex].map((item) =>
-          item.id === tempId
-            ? {
-                ...item,
-                id: newAudioSegment.audioSegmentId,
-                volume: newAudioSegment.volume || 1.0,
-                keyframes: newAudioSegment.keyframes || {},
-                startTimeWithinAudio: roundToThreeDecimals(newAudioSegment.startTime || 0),
-                endTimeWithinAudio: roundToThreeDecimals(newAudioSegment.endTime || duration),
-                duration: roundToThreeDecimals(newAudioSegment.timelineEndTime - newAudioSegment.timelineStartTime),
-                timelineStartTime: roundToThreeDecimals(newAudioSegment.timelineStartTime),
-                timelineEndTime: roundToThreeDecimals(newAudioSegment.timelineEndTime),
-                layer: newAudioSegment.layer || backendLayer,
-              }
-            : item
-        );
+        const newLayers = prevLayers.map((layer, index) => {
+          if (index === selectedLayerIndex) {
+            return layer.map((item) =>
+              item.id === tempId
+                ? {
+                    ...item,
+                    id: finalSegmentId,
+                    volume: newAudioSegment.volume || 1.0,
+                    keyframes: newAudioSegment.keyframes || {},
+                    startTimeWithinAudio: roundToThreeDecimals(newAudioSegment.startTime || 0),
+                    endTimeWithinAudio: roundToThreeDecimals(newAudioSegment.endTime || duration),
+                    duration: roundToThreeDecimals(
+                      newAudioSegment.timelineEndTime - newAudioSegment.timelineStartTime
+                    ),
+                    timelineStartTime: roundToThreeDecimals(newAudioSegment.timelineStartTime),
+                    timelineEndTime: roundToThreeDecimals(newAudioSegment.timelineEndTime),
+                    layer: newAudioSegment.layer || backendLayer,
+                  }
+                : item
+            );
+          }
+          return layer;
+        });
         updatedAudioLayers = newLayers;
         return newLayers;
       });
-
+  
       autoSaveProject(videoLayers, updatedAudioLayers);
     } catch (error) {
       console.error('Error adding audio to timeline:', error.response?.data || error.message);
@@ -3771,6 +3810,7 @@ return (
               canUndo={canUndo}
               canRedo={canRedo}
               currentTime={currentTime}
+              preloadMedia={preloadMedia} // Add this line
             />
           ) : (
             <div className="loading-message">Loading timeline...</div>
