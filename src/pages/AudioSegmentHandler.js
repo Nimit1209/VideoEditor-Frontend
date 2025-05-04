@@ -501,13 +501,13 @@ const AudioSegmentHandler = ({
       console.log('Split time too close to start or end: splitTime=', splitTime);
       return;
     }
-  
+
     try {
       const token = localStorage.getItem('token');
       if (!token) {
         throw new Error('Authentication token missing');
       }
-  
+
       let audioFileName = item.fileName;
       if (item.isExtracted) {
         const response = await axios.get(`${API_BASE_URL}/projects/${projectId}`, {
@@ -521,7 +521,7 @@ const AudioSegmentHandler = ({
             : projectData.extractedAudioJson
           : [];
         console.log('Extracted audios:', extractedAudios);
-  
+
         const basename = item.fileName.split('/').pop();
         const audioEntry = extractedAudios.find(
           (a) =>
@@ -542,7 +542,7 @@ const AudioSegmentHandler = ({
         audioFileName = audioEntry.audioFileName;
         console.log('Using audioFileName for extracted audio:', audioFileName);
       }
-  
+
       const firstPartDuration = splitTime;
       const secondPartDuration = item.duration - splitTime;
       const startWithinAudio = item.startTimeWithinAudio || 0;
@@ -554,7 +554,7 @@ const AudioSegmentHandler = ({
         'startWithinAudio=',
         startWithinAudio
       );
-  
+
       const firstPart = {
         ...item,
         duration: firstPartDuration,
@@ -564,7 +564,7 @@ const AudioSegmentHandler = ({
         endTimeWithinAudio: roundToThreeDecimals(startWithinAudio + firstPartDuration),
         waveformImage: item.waveformImage || '/images/audio.jpeg',
       };
-  
+
       const doesIdExist = (id) => {
         return audioLayers.some((layer) => layer.some((segment) => segment.id === id));
       };
@@ -572,7 +572,7 @@ const AudioSegmentHandler = ({
       while (doesIdExist(secondPartId)) {
         secondPartId = `temp-split-${uuidv4()}`;
       }
-  
+
       const secondPart = {
         ...item,
         id: secondPartId,
@@ -587,12 +587,12 @@ const AudioSegmentHandler = ({
       };
       console.log('firstPart=', firstPart);
       console.log('secondPart=', secondPart);
-  
+
       let newAudioLayers = [...audioLayers];
       let layer = [...newAudioLayers[layerIndex]];
       const itemIndex = layer.findIndex((i) => i.id === item.id);
       layer[itemIndex] = firstPart;
-  
+
       // Check for existing segment with the same ID
       let existingSegment = layer.find((s) => s.id === secondPart.id);
       if (existingSegment) {
@@ -601,11 +601,11 @@ const AudioSegmentHandler = ({
       } else {
         layer.push(secondPart);
       }
-  
+
       newAudioLayers[layerIndex] = layer;
       setAudioLayers(newAudioLayers);
       saveHistory([], newAudioLayers);
-  
+
       // Update totalDuration to reflect the split segments
       setTotalDuration((prev) =>
         Math.max(prev, secondPart.timelineEndTime)
@@ -614,7 +614,7 @@ const AudioSegmentHandler = ({
       if (preloadMedia) {
         preloadMedia();
       }
-  
+
       await updateAudioSegment(
         item.id,
         roundToThreeDecimals(item.startTime),
@@ -624,7 +624,7 @@ const AudioSegmentHandler = ({
         roundToThreeDecimals(firstPart.endTimeWithinAudio),
         firstPart
       );
-  
+
       try {
         const response = await axios.post(
           `${API_BASE_URL}/projects/${projectId}/add-project-audio-to-timeline`,
@@ -643,7 +643,7 @@ const AudioSegmentHandler = ({
           }
         );
         const newAudioSegment = response.data;
-  
+
         let finalSegmentId = newAudioSegment.audioSegmentId || newAudioSegment.id;
         if (doesIdExist(finalSegmentId)) {
           console.warn(
@@ -651,7 +651,7 @@ const AudioSegmentHandler = ({
           );
           finalSegmentId = `${finalSegmentId}-${uuidv4()}`;
         }
-  
+
         setAudioLayers((prevLayers) => {
           const waveformImage = newAudioSegment.waveformPath
             ? `${API_BASE_URL}/projects/${projectId}/waveforms/${encodeURIComponent(
@@ -685,7 +685,7 @@ const AudioSegmentHandler = ({
           newAudioLayers = updatedLayers;
           return updatedLayers;
         });
-  
+
         // Update totalDuration again with backend-confirmed values
         setTotalDuration((prev) =>
           Math.max(prev, newAudioSegment.timelineEndTime)
@@ -694,7 +694,7 @@ const AudioSegmentHandler = ({
         if (preloadMedia) {
           preloadMedia();
         }
-  
+
         saveHistory([], newAudioLayers);
         autoSave([], newAudioLayers);
         console.log('Successfully split audio');
