@@ -1330,42 +1330,43 @@ const ProjectEditor = () => {
     }
   };
 
-  const fetchAudios = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${API_BASE_URL}/projects/${projectId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const project = response.data;
-      if (project.audioJson) {
-        let audioFiles =
-          typeof project.audioJson === 'string' ? JSON.parse(project.audioJson) : project.audioJson;
-        if (Array.isArray(audioFiles)) {
-          const updatedAudios = audioFiles.map((audio) => {
-            const fullFileName = audio.audioPath.split('/').pop();
-            const originalFileName = fullFileName.replace(`${projectId}_`, '').replace(/^\d+_/, '');
-            return {
-              id: audio.audioPath || `audio-${fullFileName}-${Date.now()}`,
-              fileName: fullFileName,
-              displayName: originalFileName,
-              audioPath: `${API_BASE_URL}/projects/${projectId}/audio/${encodeURIComponent(fullFileName)}`,
-              waveformImage: audio.waveformPath
-                ? `${API_BASE_URL}/projects/${projectId}/waveforms/${encodeURIComponent(audio.waveformPath.split('/').pop())}`
-                : '/images/audio.jpeg',
-            };
-          });
-          setAudios(updatedAudios);
+    const fetchAudios = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`${API_BASE_URL}/projects/${projectId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const project = response.data;
+        if (project.audioJson) {
+          let audioFiles =
+            typeof project.audioJson === 'string' ? JSON.parse(project.audioJson) : project.audioJson;
+          if (Array.isArray(audioFiles)) {
+            const updatedAudios = audioFiles.map((audio) => {
+              const fullFileName = audio.audioPath.split('/').pop();
+              const originalFileName = fullFileName.replace(`${projectId}_`, '').replace(/^\d+_/, '');
+              return {
+                id: audio.audioPath || `audio-${fullFileName}-${Date.now()}`,
+                fileName: fullFileName,
+                displayName: originalFileName,
+                audioPath: `${API_BASE_URL}/projects/${projectId}/audio/${encodeURIComponent(fullFileName)}`,
+                waveformImage: audio.waveformPath
+                  ? `${API_BASE_URL}/projects/${projectId}/waveforms/${encodeURIComponent(audio.waveformPath.split('/').pop())}`
+                  : '/images/audio.jpeg',
+              };
+            });
+            setAudios(updatedAudios);
+          } else {
+            setAudios([]);
+          }
         } else {
           setAudios([]);
         }
-      } else {
+      } catch (error) {
+        console.error('Error fetching audios:', error);
         setAudios([]);
       }
-    } catch (error) {
-      console.error('Error fetching audios:', error);
-      setAudios([]);
-    }
-  };
+    };
+
   const fetchPhotos = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -1780,13 +1781,13 @@ const ProjectEditor = () => {
     const handleAudioUpload = async (event) => {
       const files = Array.from(event.target.files);
       if (files.length === 0) return;
-    
+
       const formData = new FormData();
       files.forEach((file) => {
         formData.append('audio', file);
         formData.append('audioFileNames', file.name);
       });
-    
+
       try {
         setUploading(true);
         const token = localStorage.getItem('token');
@@ -1796,7 +1797,7 @@ const ProjectEditor = () => {
           { headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${token}` } }
         );
         const { project, audioFiles } = response.data;
-    
+
         // Update state with audioFiles from response
         if (audioFiles && Array.isArray(audioFiles)) {
           const updatedAudios = audioFiles.map((audio) => {
@@ -1814,7 +1815,7 @@ const ProjectEditor = () => {
           });
           setAudios(updatedAudios);
         }
-    
+
         // Fetch audios to ensure consistency
         if (project) await fetchAudios();
       } catch (error) {
@@ -2620,11 +2621,24 @@ const handleSegmentSelect = async (segment) => {
             hue: 0,
             blur: 0,
             sharpen: 0,
+            grayscale: '',
+            invert: '',
+            rotate: 0,
+            flip: '', // Include flip with default empty string
           };
+          // Update filterParams based on fetched filters
           filters.forEach((filter) => {
-            initialFilterParams[filter.filterName] =
-              parseFloat(filter.filterValue) || initialFilterParams[filter.filterName];
+            if (filter.filterName === 'flip') {
+              // Ensure flip value is one of '', 'horizontal', 'vertical', or 'both'
+              initialFilterParams.flip = ['horizontal', 'vertical', 'both'].includes(filter.filterValue)
+                ? filter.filterValue
+                : '';
+            } else {
+              initialFilterParams[filter.filterName] =
+                parseFloat(filter.filterValue) || initialFilterParams[filter.filterName];
+            }
           });
+
           setFilterParams(initialFilterParams);
 
           setVideoLayers((prevLayers) => {
@@ -2647,6 +2661,10 @@ const handleSegmentSelect = async (segment) => {
             hue: 0,
             blur: 0,
             sharpen: 0,
+            grayscale: '',
+            invert: '',
+            rotate: 0,
+            flip: '', // Reset flip to empty string on error
           });
         }
       } else {
@@ -2658,6 +2676,10 @@ const handleSegmentSelect = async (segment) => {
           hue: 0,
           blur: 0,
           sharpen: 0,
+          grayscale: '',
+          invert: '',
+          rotate: 0,
+          flip: '', // Ensure flip is reset for non-video/image segments
         });
       }
       await fetchTransitions();
@@ -3673,6 +3695,75 @@ const filteredElements = elements.filter((element) =>
   element.displayName.toLowerCase().includes(elementSearchQuery.toLowerCase())
 );
 
+  // In ProjectEditor.js, add the updateKeyframe function
+  const updateKeyframe = (property, newValue) => {
+    const time = currentTimeInSegment;
+    const currentKeyframes = keyframes || {};
+    const updatedPropertyKeyframes = (currentKeyframes[property] || []).map((kf) =>
+      areTimesEqual(kf.time, time) ? { ...kf, value: newValue } : kf
+    );
+
+    const updatedKeyframes = {
+      ...currentKeyframes,
+      [property]: updatedPropertyKeyframes,
+    };
+
+    // Update keyframes state
+    setKeyframes(updatedKeyframes);
+
+    // Update segment in layers
+    if (selectedSegment.type === 'audio') {
+      setAudioLayers((prevLayers) => {
+        const newLayers = [...prevLayers];
+        const layerIndex = Math.abs(selectedSegment.layer) - 1;
+        newLayers[layerIndex] = newLayers[layerIndex].map((item) =>
+          item.id === selectedSegment.id ? { ...item, keyframes: updatedKeyframes } : item
+        );
+        return newLayers;
+      });
+    } else {
+      setVideoLayers((prevLayers) => {
+        const newLayers = [...prevLayers];
+        newLayers[selectedSegment.layer] = newLayers[selectedSegment.layer].map((item) =>
+          item.id === selectedSegment.id ? { ...item, keyframes: updatedKeyframes } : item
+        );
+        return newLayers;
+      });
+    }
+
+    // Update tempSegmentValues
+    setTempSegmentValues((prev) => ({
+      ...prev,
+      [property]: newValue,
+    }));
+
+    // Save to backend
+    const token = localStorage.getItem('token');
+    axios
+      .post(
+        `${API_BASE_URL}/projects/${projectId}/update-keyframe`,
+        {
+          segmentId: selectedSegment.id,
+          segmentType: selectedSegment.type,
+          property,
+          time,
+          value: newValue,
+          interpolationType: 'linear',
+        },
+        { params: { sessionId }, headers: { Authorization: `Bearer ${token}` } }
+      )
+      .then(() => {
+        // Schedule auto-save
+        if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+        updateTimeoutRef.current = setTimeout(() => {
+          autoSaveProject(videoLayers, audioLayers);
+        }, 1000);
+      })
+      .catch((error) => {
+        console.error('Error updating keyframe:', error);
+      });
+  };
+
 return (
   <div className="project-editor">
     <aside className={`media-panel ${isMediaPanelOpen ? 'open' : 'closed'}`}>
@@ -4064,6 +4155,8 @@ return (
                 areTimesEqual={areTimesEqual}
                 getValueAtTime={getValueAtTime}
                 setCurrentTimeInSegment={setCurrentTimeInSegment}
+                addKeyframe={addKeyframe}
+                updateKeyframe={updateKeyframe} // Add this line
               />
             </div>
           )}

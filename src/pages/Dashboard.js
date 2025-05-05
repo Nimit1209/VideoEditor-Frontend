@@ -43,15 +43,15 @@ const Dashboard = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       console.log('User profile response:', response.data);
-      
+
       const fullName = response.data.name || '';
       const nameParts = fullName.trim().split(' ');
       const firstName = nameParts[0] || '';
       const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
-      
+
       // Add this debug statement
       console.log('Profile picture URL:', response.data.picture);
-      
+
       setUserProfile({
         email: response.data.email || '',
         firstName: firstName,
@@ -79,7 +79,7 @@ const Dashboard = () => {
    const preloadProfileImage = (url) => {
     // Don't attempt to load if URL is null or empty
     if (!url) return;
-    
+
     const img = new Image();
     img.onload = () => {
       setUserProfile(prev => ({
@@ -94,7 +94,7 @@ const Dashboard = () => {
         profileImageLoaded: false
       }));
     };
-    
+
     // Add a cache-busting parameter to try to avoid hitting rate limits
     // and add a timestamp to prevent caching issues
     const cacheBuster = `?cb=${Date.now()}`;
@@ -357,7 +357,7 @@ const Dashboard = () => {
     setHeight(presetHeight);
     setFps(presetFps);
   };
-  
+
   const navigateToProfile = () => {
     // Navigate to profile page (you'll need to implement this)
     navigate('/profile');
@@ -461,10 +461,10 @@ const Dashboard = () => {
             <div className="profile-icon" onClick={toggleProfileDropdown}>
               {userProfile.picture ? (
                 <>
-                  <img 
-                    src={userProfile.picture} 
-                    alt="Profile" 
-                    className="profile-picture" 
+                  <img
+                    src={userProfile.picture}
+                    alt="Profile"
+                    className="profile-picture"
                     onError={handleImageError}
                     crossOrigin="anonymous"
                   />
@@ -488,10 +488,10 @@ const Dashboard = () => {
                   <div className="profile-avatar">
                     {userProfile.picture ? (
                       <>
-                        <img 
-                          src={userProfile.picture} 
-                          alt="Profile" 
-                          className="dropdown-profile-picture" 
+                        <img
+                          src={userProfile.picture}
+                          alt="Profile"
+                          className="dropdown-profile-picture"
                           onError={handleImageError}
                           crossOrigin="anonymous"
                         />
