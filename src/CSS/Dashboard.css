@@ -45,9 +45,11 @@ html, body {
 section {
   transition: opacity 0.3s ease;
 }
+
 html {
   scroll-behavior: smooth;
 }
+
 /* Reset and Base styles */
 * {
   box-sizing: border-box;
@@ -71,7 +73,7 @@ html {
   gap: 40px;
 }
 
-/* Rest of the CSS remains unchanged... */
+/* Navigation bar */
 .nav-bar {
   position: fixed;
   top: 20px; /* Space above the nav bar */
@@ -329,12 +331,8 @@ html {
 
 /* Header container for buttons */
 .header-container {
-  position: absolute;
-  top: 90px; /* Adjusted for nav bar height */
-  right: 20px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
   z-index: 10;
 }
@@ -701,26 +699,51 @@ html {
 /* Projects section */
 .projects-section {
   max-width: 100%;
-  margin-top: 60px;
   margin-bottom: 40px;
+  padding-top: 80px; /* Ensure content is not obscured by fixed nav bar */
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* New header for projects section to align title and button */
+.projects-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.projects-section h2 {
+  font-size: 1.3rem;
+  font-weight: 800;
+  margin: 0; /* Remove margin to align with button */
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  background: linear-gradient(90deg, #3F8EFC, #B76CFD);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #3F8EFC;
+  animation: shimmer 3s infinite;
+  text-align: left;
 }
 
 /* About Us section */
 .about-us-section {
   max-width: 100%;
-  margin-top: 0;
   margin-bottom: 40px;
+  padding-top: 80px; /* Ensure content is not obscured by fixed nav bar */
 }
 
 /* Contact Us section */
 .contact-us-section {
   max-width: 100%;
-  margin-top: 0;
   margin-bottom: 40px;
+  padding-top: 80px; /* Ensure content is not obscured by fixed nav bar */
 }
 
-.contact-us-section h2,
-.projects-section h2 {
+.contact-us-section h2 {
   font-size: 1.3rem;
   font-weight: 800;
   margin-bottom: 12px;
@@ -1062,10 +1085,6 @@ html {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
 
-  .header-container {
-    top: 90px; /* Adjusted for compact nav bar */
-  }
-
   .dropdown-menu {
     width: 280px;
   }
@@ -1080,6 +1099,18 @@ html {
 
   .profile-dropdown {
     top: 45px;
+  }
+
+  .projects-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .projects-section,
+  .about-us-section,
+  .contact-us-section {
+    padding-top: 70px; /* Adjusted for smaller nav bar height */
   }
 }
 
@@ -1154,10 +1185,6 @@ html {
     height: 36px;
   }
 
-  .header-container {
-    top: 80px; /* Adjusted for smaller nav bar */
-  }
-
   .thumbnail-container {
     height: 160px;
   }
@@ -1175,5 +1202,17 @@ html {
   .section-header .logo-element::before {
     width: 6px;
     height: 6px;
+  }
+
+  .projects-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .projects-section,
+  .about-us-section,
+  .contact-us-section {
+    padding-top: 60px; /* Adjusted for smaller nav bar height */
   }
 }

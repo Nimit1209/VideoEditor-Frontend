@@ -414,8 +414,7 @@ const Dashboard = () => {
       setIsNavMenuOpen(false);
     }, 150);
   };
-  
-  // 2. Add this useEffect to validate section IDs on component mount
+
   useEffect(() => {
     // Validate that all sections exist in the DOM
     const sections = ['dashboard-section', 'about-us-section', 'contact-us-section'];
@@ -428,17 +427,15 @@ const Dashboard = () => {
       }
     });
   }, [isDataLoaded]);
-  
-  // 3. Add these fallback navigation methods to try if the main one doesn't work
+
   const fallbackScrollToSection = (sectionId) => {
     const section = document.getElementById(sectionId);
     if (!section) return;
     
-    // Method 1: Using scrollIntoView
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setIsNavMenuOpen(false);
   };
-  
+
   const manualScrollToSection = (sectionId) => {
     switch(sectionId) {
       case 'dashboard-section':
@@ -455,7 +452,6 @@ const Dashboard = () => {
     }
     setIsNavMenuOpen(false);
   };
-  
 
   return (
     <div className="dashboard">
@@ -477,42 +473,38 @@ const Dashboard = () => {
           <button className="hamburger-menu" onClick={toggleNavMenu}>
             <FaBars />
           </button>
-
-<div className={`nav-links ${isNavMenuOpen ? 'open' : ''}`}>
-  <button 
-    type="button" 
-    className="nav-link" 
-    onClick={() => {
-      scrollToSection('dashboard-section');
-      // If the above fails, try these as backups
-      setTimeout(() => fallbackScrollToSection('dashboard-section'), 100);
-    }}
-  >
-    My Projects
-  </button>
-  <button 
-    type="button" 
-    className="nav-link" 
-    onClick={() => {
-      scrollToSection('about-us-section');
-      // If the above fails, try these as backups
-      setTimeout(() => fallbackScrollToSection('about-us-section'), 100);
-    }}
-  >
-    About Us
-  </button>
-  <button 
-    type="button" 
-    className="nav-link" 
-    onClick={() => {
-      scrollToSection('contact-us-section');
-      // If the above fails, try these as backups
-      setTimeout(() => fallbackScrollToSection('contact-us-section'), 100);
-    }}
-  >
-    Contact Us
-  </button>
-</div>
+          <div className={`nav-links ${isNavMenuOpen ? 'open' : ''}`}>
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => {
+                scrollToSection('dashboard-section');
+                setTimeout(() => fallbackScrollToSection('dashboard-section'), 100);
+              }}
+            >
+              My Projects
+            </button>
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => {
+                scrollToSection('about-us-section');
+                setTimeout(() => fallbackScrollToSection('about-us-section'), 100);
+              }}
+            >
+              About Us
+            </button>
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => {
+                scrollToSection('contact-us-section');
+                setTimeout(() => fallbackScrollToSection('contact-us-section'), 100);
+              }}
+            >
+              Contact Us
+            </button>
+          </div>
           <div className="profile-section">
             <div className="profile-icon" onClick={toggleProfileDropdown}>
               {userProfile.picture ? (
@@ -585,83 +577,6 @@ const Dashboard = () => {
         </div>
       </nav>
 
-      {/* Header container for buttons */}
-      <div className="header-container">
-        <div className="create-dropdown">
-          <button className="create-button" onClick={toggleDropdown}>
-            <span className="plus-icon">+</span> Create
-          </button>
-          {isDropdownOpen && (
-            <div className="dropdown-menu">
-              <div className="dropdown-title">Create New Project</div>
-              <div className="dropdown-form">
-                <input
-                  type="text"
-                  placeholder="Project Name"
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  className="dropdown-input"
-                />
-                <div className="dimension-inputs">
-                  <input
-                    type="number"
-                    placeholder="Width"
-                    value={width}
-                    onChange={(e) => setWidth(parseInt(e.target.value, 10))}
-                    className="dropdown-input dimension-input"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Height"
-                    value={height}
-                    onChange={(e) => setHeight(parseInt(e.target.value, 10))}
-                    className="dropdown-input dimension-input"
-                  />
-                  <input
-                    type="number"
-                    placeholder="FPS"
-                    value={fps}
-                    onChange={(e) => setFps(parseInt(e.target.value, 10))}
-                    className="dropdown-input dimension-input"
-                  />
-                </div>
-              </div>
-              <div className="dropdown-presets">
-                <div className="dropdown-subtitle">Presets</div>
-                <div className="dropdown-item" onClick={() => handlePresetSelect(1920, 1080, 30)}>
-                  YouTube (1920x1080, 30 FPS)
-                </div>
-                <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
-                  YouTube Shorts (1080x1920, 60 FPS)
-                </div>
-                <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
-                  Instagram Reels (1080x1920, 60 FPS)
-                </div>
-                <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
-                  TikTok (1080x1920, 60 FPS)
-                </div>
-                <div className="dropdown-subtitle">FPS Options</div>
-                <div className="dropdown-item" onClick={() => setFps(24)}>
-                  24 FPS (Cinematic)
-                </div>
-                <div className="dropdown-item" onClick={() => setFps(25)}>
-                  25 FPS (Standard)
-                </div>
-                <div className="dropdown-item" onClick={() => setFps(30)}>
-                  30 FPS (Common)
-                </div>
-                <div className="dropdown-item" onClick={() => setFps(60)}>
-                  60 FPS (Smooth)
-                </div>
-              </div>
-              <button className="dropdown-create-button" onClick={createNewProject}>
-                Create
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Ripple effect */}
       <div className="ripple-effect">
         <div className="ripple-ring"></div>
@@ -671,8 +586,86 @@ const Dashboard = () => {
       <div className="particle square" style={{ width: '8px', height: '8px', top: '40%', left: '70%' }}></div>
       <div className="particle circle" style={{ width: '12px', height: '12px', top: '60%', left: '15%' }}></div>
 
+      {/* Projects Section */}
       <section className="projects-section" id="dashboard-section">
-        <h2>My Projects</h2>
+        <div className="projects-section-header">
+          <h2>My Projects</h2>
+          <div className="header-container">
+            <div className="create-dropdown">
+              <button className="create-button" onClick={toggleDropdown}>
+                <span className="plus-icon">+</span> Create
+              </button>
+              {isDropdownOpen && (
+                <div className="dropdown-menu">
+                  <div className="dropdown-title">Create New Project</div>
+                  <div className="dropdown-form">
+                    <input
+                      type="text"
+                      placeholder="Project Name"
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      className="dropdown-input"
+                    />
+                    <div className="dimension-inputs">
+                      <input
+                        type="number"
+                        placeholder="Width"
+                        value={width}
+                        onChange={(e) => setWidth(parseInt(e.target.value, 10))}
+                        className="dropdown-input dimension-input"
+                      />
+                      <input
+                        type="number"
+                        placeholder="Height"
+                        value={height}
+                        onChange={(e) => setHeight(parseInt(e.target.value, 10))}
+                        className="dropdown-input dimension-input"
+                      />
+                      <input
+                        type="number"
+                        placeholder="FPS"
+                        value={fps}
+                        onChange={(e) => setFps(parseInt(e.target.value, 10))}
+                        className="dropdown-input dimension-input"
+                      />
+                    </div>
+                  </div>
+                  <div className="dropdown-presets">
+                    <div className="dropdown-subtitle">Presets</div>
+                    <div className="dropdown-item" onClick={() => handlePresetSelect(1920, 1080, 30)}>
+                      YouTube (1920x1080, 30 FPS)
+                    </div>
+                    <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
+                      YouTube Shorts (1080x1920, 60 FPS)
+                    </div>
+                    <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
+                      Instagram Reels (1080x1920, 60 FPS)
+                    </div>
+                    <div className="dropdown-item" onClick={() => handlePresetSelect(1080, 1920, 60)}>
+                      TikTok (1080x1920, 60 FPS)
+                    </div>
+                    <div className="dropdown-subtitle">FPS Options</div>
+                    <div className="dropdown-item" onClick={() => setFps(24)}>
+                      24 FPS (Cinematic)
+                    </div>
+                    <div className="dropdown-item" onClick={() => setFps(25)}>
+                      25 FPS (Standard)
+                    </div>
+                    <div className="dropdown-item" onClick={() => setFps(30)}>
+                      30 FPS (Common)
+                    </div>
+                    <div className="dropdown-item" onClick={() => setFps(60)}>
+                      60 FPS (Smooth)
+                    </div>
+                  </div>
+                  <button className="dropdown-create-button" onClick={createNewProject}>
+                    Create
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
         {location.state?.message && <p className="success-message">{location.state.message}</p>}
         {location.state?.error && <p className="error-message">{location.state.error}</p>}
         <div className="project-grid">
@@ -708,6 +701,8 @@ const Dashboard = () => {
           )}
         </div>
       </section>
+
+      {/* About Us Section */}
       <section className="about-us-section" id="about-us-section">
         <div className="section-header">
           <h2>
@@ -743,6 +738,8 @@ const Dashboard = () => {
           Join us at the peak of visual storytelling.
         </p>
       </section>
+
+      {/* Contact Us Section */}
       <section className="contact-us-section" id="contact-us-section">
         <h2>Contact Us</h2>
         <p>
