@@ -194,11 +194,13 @@ const Dashboard = () => {
       video.onseeked = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        const maxWidth = 300;
-        const maxHeight = 200;
+        const maxWidth = 600; // Increased for higher quality
+        const maxHeight = 400; // Increased for higher quality
+        const pixelRatio = window.devicePixelRatio || 1; // Support high-DPI displays
         let width = video.videoWidth;
         let height = video.videoHeight;
 
+        // Maintain aspect ratio
         if (width > height) {
           if (width > maxWidth) {
             height = (height * maxWidth) / width;
@@ -211,10 +213,12 @@ const Dashboard = () => {
           }
         }
 
-        canvas.width = width;
-        canvas.height = height;
+        // Scale canvas for high-DPI displays
+        canvas.width = width * pixelRatio;
+        canvas.height = height * pixelRatio;
+        ctx.scale(pixelRatio, pixelRatio);
         ctx.drawImage(video, 0, 0, width, height);
-        const thumbnail = canvas.toDataURL('image/jpeg');
+        const thumbnail = canvas.toDataURL('image/jpeg', 0.95); // Higher quality JPEG
         resolve(thumbnail);
       };
 
@@ -235,11 +239,13 @@ const Dashboard = () => {
       img.onload = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        const maxWidth = 300;
-        const maxHeight = 200;
+        const maxWidth = 600; // Increased for higher quality
+        const maxHeight = 400; // Increased for higher quality
+        const pixelRatio = window.devicePixelRatio || 1; // Support high-DPI displays
         let width = img.width;
         let height = img.height;
 
+        // Maintain aspect ratio
         if (width > height) {
           if (width > maxWidth) {
             height = (height * maxWidth) / width;
@@ -252,10 +258,12 @@ const Dashboard = () => {
           }
         }
 
-        canvas.width = width;
-        canvas.height = height;
+        // Scale canvas for high-DPI displays
+        canvas.width = width * pixelRatio;
+        canvas.height = height * pixelRatio;
+        ctx.scale(pixelRatio, pixelRatio);
         ctx.drawImage(img, 0, 0, width, height);
-        const thumbnail = canvas.toDataURL('image/jpeg');
+        const thumbnail = canvas.toDataURL('image/jpeg', 0.95); // Higher quality JPEG
         resolve(thumbnail);
       };
       img.onerror = () => {
