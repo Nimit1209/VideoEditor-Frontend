@@ -1,20 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Tilt } from 'react-tilt';
 import '../CSS/Dashboard.css';
 import { FaTrash, FaSignOutAlt, FaBars } from 'react-icons/fa';
 
 const API_BASE_URL = 'http://localhost:8080';
 
+const ConfirmationModal = ({ isOpen, onClose, onConfirm, projectName }) => {
+  if (!isOpen) return null;
+
+  return (
+    <motion.div
+      className="modal-overlay"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <motion.div
+        className="confirmation-modal"
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.8, opacity: 0 }}
+        transition={{ duration: 0.3 }}
+      >
+        <h3 className="modal-title">Confirm Deletion</h3>
+        <p className="modal-message">
+          Are you sure you want to delete the project <strong>{projectName}</strong>? This action cannot be undone.
+        </p>
+        <div className="modal-buttons">
+          <button className="modal-button cancel-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="modal-button delete-button" onClick={onConfirm}>
+            Delete
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 const Dashboard = () => {
-  const [projects, setProjects] = useState([
-    { id: 1, name: 'Project 1', thumbnail: null },
-    { id: 2, name: 'Project 2', thumbnail: null },
-    { id: 3, name: 'Project 3', thumbnail: null },
-    { id: 4, name: 'Project 4', thumbnail: null },
-    { id: 5, name: 'Project 5', thumbnail: null },
-    { id: 6, name: 'Project 6', thumbnail: null },
-  ]);
+  const [projects, setProjects] = useState([]);
   const [newProjectName, setNewProjectName] = useState('');
   const [width, setWidth] = useState(1920);
   const [height, setHeight] = useState(1080);
@@ -30,6 +60,10 @@ const Dashboard = () => {
     googleAuth: false,
   });
   const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState(null);
+  const [successMessage, setSuccessMessage] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
@@ -37,9 +71,23 @@ const Dashboard = () => {
   useEffect(() => {
     console.log('Dashboard mounted, location state:', location.state);
     const loadData = async () => {
+      setIsLoading(true);
+      // Initialize profile from localStorage
+      const storedProfile = localStorage.getItem('userProfile');
+      if (storedProfile) {
+        const profile = JSON.parse(storedProfile);
+        setUserProfile({
+          email: profile.email || '',
+          firstName: profile.name ? profile.name.split(' ')[0] : '',
+          lastName: profile.name ? profile.name.split(' ').slice(1).join(' ') : '',
+          picture: profile.picture || null,
+          googleAuth: profile.googleAuth || false,
+        });
+      }
       await fetchUserProfile();
       await fetchProjects();
       setIsDataLoaded(true);
+      setIsLoading(false);
     };
     loadData();
 
@@ -92,15 +140,23 @@ const Dashboard = () => {
       const firstName = nameParts[0] || '';
       const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-      console.log('Profile picture URL:', response.data.picture);
+      console.log('Parsed profile: email=%s, firstName=%s, lastName=%s, picture=%s, googleAuth=%s',
+        response.data.email, firstName, lastName, response.data.picture, response.data.googleAuth);
 
-      setUserProfile({
+      const profile = {
         email: response.data.email || '',
         firstName: firstName,
         lastName: lastName,
         picture: response.data.picture || null,
         googleAuth: response.data.googleAuth || false,
-      });
+      };
+      setUserProfile(profile);
+      localStorage.setItem('userProfile', JSON.stringify({
+        email: profile.email,
+        name: fullName,
+        picture: profile.picture,
+        googleAuth: profile.googleAuth,
+      }));
     } catch (error) {
       console.error('Error fetching user profile:', error);
       console.log('Error details:', {
@@ -110,9 +166,16 @@ const Dashboard = () => {
       if (error.response?.status === 401) {
         console.log('401 Unauthorized, redirecting to login');
         localStorage.removeItem('token');
+        localStorage.removeItem('userProfile');
         navigate('/', { state: { error: 'Session expired. Please log in again.' } });
       } else {
-        setUserProfile({ firstName: '', lastName: '', picture: null, googleAuth: false });
+        setUserProfile({
+          email: '',
+          firstName: '',
+          lastName: '',
+          picture: null,
+          googleAuth: false,
+        });
       }
     }
   };
@@ -131,7 +194,7 @@ const Dashboard = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       console.log('Projects response:', response.data);
-      const projectList = response.data;
+      const projectList = response.data || [];
 
       const projectsWithThumbnails = await Promise.all(
         projectList.map(async (project) => {
@@ -173,6 +236,7 @@ const Dashboard = () => {
       if (error.response?.status === 401) {
         console.log('401 Unauthorized, redirecting to login');
         localStorage.removeItem('token');
+        localStorage.removeItem('userProfile');
         navigate('/', { state: { error: 'Session expired. Please log in again.' } });
       }
     }
@@ -194,13 +258,12 @@ const Dashboard = () => {
       video.onseeked = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        const maxWidth = 600; // Increased for higher quality
-        const maxHeight = 400; // Increased for higher quality
-        const pixelRatio = window.devicePixelRatio || 1; // Support high-DPI displays
+        const maxWidth = 600;
+        const maxHeight = 400;
+        const pixelRatio = window.devicePixelRatio || 1;
         let width = video.videoWidth;
         let height = video.videoHeight;
 
-        // Maintain aspect ratio
         if (width > height) {
           if (width > maxWidth) {
             height = (height * maxWidth) / width;
@@ -213,12 +276,11 @@ const Dashboard = () => {
           }
         }
 
-        // Scale canvas for high-DPI displays
         canvas.width = width * pixelRatio;
         canvas.height = height * pixelRatio;
         ctx.scale(pixelRatio, pixelRatio);
         ctx.drawImage(video, 0, 0, width, height);
-        const thumbnail = canvas.toDataURL('image/jpeg', 0.95); // Higher quality JPEG
+        const thumbnail = canvas.toDataURL('image/jpeg', 0.95);
         resolve(thumbnail);
       };
 
@@ -239,13 +301,12 @@ const Dashboard = () => {
       img.onload = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        const maxWidth = 600; // Increased for higher quality
-        const maxHeight = 400; // Increased for higher quality
-        const pixelRatio = window.devicePixelRatio || 1; // Support high-DPI displays
+        const maxWidth = 600;
+        const maxHeight = 400;
+        const pixelRatio = window.devicePixelRatio || 1;
         let width = img.width;
         let height = img.height;
 
-        // Maintain aspect ratio
         if (width > height) {
           if (width > maxWidth) {
             height = (height * maxWidth) / width;
@@ -258,12 +319,11 @@ const Dashboard = () => {
           }
         }
 
-        // Scale canvas for high-DPI displays
         canvas.width = width * pixelRatio;
         canvas.height = height * pixelRatio;
         ctx.scale(pixelRatio, pixelRatio);
         ctx.drawImage(img, 0, 0, width, height);
-        const thumbnail = canvas.toDataURL('image/jpeg', 0.95); // Higher quality JPEG
+        const thumbnail = canvas.toDataURL('image/jpeg', 0.95);
         resolve(thumbnail);
       };
       img.onerror = () => {
@@ -314,6 +374,7 @@ const Dashboard = () => {
       if (error.response?.status === 401) {
         console.log('401 Unauthorized, redirecting to login');
         localStorage.removeItem('token');
+        localStorage.removeItem('userProfile');
         navigate('/', { state: { error: 'Session expired. Please log in again.' } });
       } else if (error.response?.status === 400) {
         alert('Invalid project parameters: ' + error.response.data);
@@ -324,10 +385,15 @@ const Dashboard = () => {
   };
 
   const deleteProject = async (projectId) => {
-    const confirmDelete = window.confirm('Are you sure about deleting this Project?');
-    if (!confirmDelete) {
-      return;
-    }
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    setProjectToDelete(project);
+    setShowModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!projectToDelete) return;
 
     try {
       const token = localStorage.getItem('token');
@@ -337,16 +403,25 @@ const Dashboard = () => {
         return;
       }
 
-      await axios.delete(`${API_BASE_URL}/projects/${projectId}`, {
+      await axios.delete(`${API_BASE_URL}/projects/${projectToDelete.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      setProjects(projects.filter((project) => project.id !== projectId));
+      setProjects(projects.filter((project) => project.id !== projectToDelete.id));
+      setShowModal(false);
+      setProjectToDelete(null);
+      setSuccessMessage('Project deleted successfully');
+      setTimeout(() => {
+        setSuccessMessage('');
+      }, 5000);
     } catch (error) {
       console.error('Error deleting project:', error);
+      setShowModal(false);
+      setProjectToDelete(null);
       if (error.response?.status === 401) {
         console.log('401 Unauthorized, redirecting to login');
         localStorage.removeItem('token');
+        localStorage.removeItem('userProfile');
         navigate('/', { state: { error: 'Session expired. Please log in again.' } });
       } else if (error.response?.status === 403) {
         alert('Unauthorized to delete this project');
@@ -358,12 +433,18 @@ const Dashboard = () => {
     }
   };
 
+  const cancelDelete = () => {
+    setShowModal(false);
+    setProjectToDelete(null);
+  };
+
   const loadProject = (projectId) => {
     navigate(`/projecteditor/${projectId}`);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('userProfile');
     setIsProfileDropdownOpen(false);
     navigate('/');
   };
@@ -394,37 +475,31 @@ const Dashboard = () => {
 
   const scrollToSection = (sectionId) => {
     console.log(`Attempting to scroll to section: ${sectionId}`);
-    
-    // Force a small delay to ensure DOM is fully rendered
+
     setTimeout(() => {
       const section = document.getElementById(sectionId);
       if (!section) {
         console.error(`Section with ID ${sectionId} not found.`);
         return;
       }
-      
-      // Get the navbar height for offset
+
       const navBar = document.querySelector('.nav-bar');
       const navHeight = navBar ? navBar.offsetHeight : 80;
-      
-      // Calculate position with a little extra padding for better visibility
+
       const offsetPosition = section.offsetTop - navHeight - 20;
-      
+
       console.log(`Scrolling to ${sectionId} at position: ${offsetPosition}px`);
-      
-      // Use both methods for maximum browser compatibility
+
       window.scrollTo({
         top: offsetPosition,
         behavior: 'smooth'
       });
-      
-      // Close the mobile nav if it's open
+
       setIsNavMenuOpen(false);
     }, 150);
   };
 
   useEffect(() => {
-    // Validate that all sections exist in the DOM
     const sections = ['dashboard-section', 'about-us-section', 'contact-us-section'];
     sections.forEach(id => {
       const element = document.getElementById(id);
@@ -439,31 +514,19 @@ const Dashboard = () => {
   const fallbackScrollToSection = (sectionId) => {
     const section = document.getElementById(sectionId);
     if (!section) return;
-    
-    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setIsNavMenuOpen(false);
-  };
 
-  const manualScrollToSection = (sectionId) => {
-    switch(sectionId) {
-      case 'dashboard-section':
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        break;
-      case 'about-us-section':
-        window.scrollTo({ top: window.innerHeight, behavior: 'smooth' });
-        break;
-      case 'contact-us-section':
-        window.scrollTo({ top: window.innerHeight * 2, behavior: 'smooth' });
-        break;
-      default:
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setIsNavMenuOpen(false);
   };
 
   return (
     <div className="dashboard">
-      {/* Navigation Bar */}
+      {isLoading && (
+        <div className="loading-overlay">
+          <div className="spinner"></div>
+          <p>Loading your dashboard...</p>
+        </div>
+      )}
       <nav className={`nav-bar ${isScrolled ? 'scrolled' : ''}`}>
         <div className="nav-content">
           <div className="branding-container">
@@ -585,16 +648,22 @@ const Dashboard = () => {
         </div>
       </nav>
 
-      {/* Ripple effect */}
       <div className="ripple-effect">
         <div className="ripple-ring"></div>
       </div>
-      {/* Particles */}
       <div className="particle circle" style={{ width: '10px', height: '10px', top: '20%', left: '30%' }}></div>
       <div className="particle square" style={{ width: '8px', height: '8px', top: '40%', left: '70%' }}></div>
       <div className="particle circle" style={{ width: '12px', height: '12px', top: '60%', left: '15%' }}></div>
 
-      {/* Projects Section */}
+      <AnimatePresence>
+        <ConfirmationModal
+          isOpen={showModal}
+          onClose={cancelDelete}
+          onConfirm={confirmDelete}
+          projectName={projectToDelete?.name || ''}
+        />
+      </AnimatePresence>
+
       <section className="projects-section" id="dashboard-section">
         <div className="projects-section-header">
           <h2>My Projects</h2>
@@ -674,43 +743,76 @@ const Dashboard = () => {
             </div>
           </div>
         </div>
-        {location.state?.message && <p className="success-message">{location.state.message}</p>}
-        {location.state?.error && <p className="error-message">{location.state.error}</p>}
+        <AnimatePresence>
+          {successMessage && (
+            <motion.p
+              className="success-message"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+            >
+              {successMessage}
+            </motion.p>
+          )}
+          {location.state?.error && (
+            <motion.p
+              className="error-message"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+            >
+              {location.state.error}
+            </motion.p>
+          )}
+        </AnimatePresence>
         <div className="project-grid">
           {projects.length === 0 ? (
             <p className="no-projects">No projects yet. Create one to get started!</p>
           ) : (
             projects.map((project) => (
-              <div key={project.id} className="project-card">
-                <div className="thumbnail-container" onClick={() => loadProject(project.id)}>
-                  {project.thumbnail ? (
-                    <img
-                      src={project.thumbnail}
-                      alt={`${project.name} thumbnail`}
-                      className="project-thumbnail"
-                    />
-                  ) : (
-                    <div className="thumbnail-placeholder">No Preview Available</div>
-                  )}
-                  <div
-                    className="delete-icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteProject(project.id);
-                    }}
-                    title="Delete Project"
-                  >
-                    <FaTrash />
+              <Tilt key={project.id} options={{ max: 25, scale: 1.05, speed: 400 }}>
+                <motion.div
+                  className="project-card"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5 }}
+                  whileHover={{ y: -10 }}
+                >
+                  <div className="thumbnail-container" onClick={() => loadProject(project.id)}>
+                    {project.thumbnail ? (
+                      <motion.img
+                        src={project.thumbnail}
+                        alt={`${project.name} thumbnail`}
+                        className="project-thumbnail"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.3 }}
+                      />
+                    ) : (
+                      <div className="thumbnail-placeholder">No Preview Available</div>
+                    )}
+                    <motion.div
+                      className="delete-icon"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteProject(project.id);
+                      }}
+                      title="Delete Project"
+                      whileHover={{ scale: 1.2 }}
+                    >
+                      <FaTrash />
+                    </motion.div>
                   </div>
-                </div>
-                <h3 className="project-title">{project.name}</h3>
-              </div>
+                  <h3 className="project-title">{project.name}</h3>
+                </motion.div>
+              </Tilt>
             ))
           )}
         </div>
       </section>
 
-      {/* About Us Section */}
       <section className="about-us-section" id="about-us-section">
         <div className="section-header">
           <h2>
@@ -747,7 +849,6 @@ const Dashboard = () => {
         </p>
       </section>
 
-      {/* Contact Us Section */}
       <section className="contact-us-section" id="contact-us-section">
         <h2>Contact Us</h2>
         <p>

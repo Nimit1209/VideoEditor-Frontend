@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import '../CSS/Timeline.css';
 import axios from 'axios';
+import WaveSurfer from 'wavesurfer.js';
 import TimelineControls from './TimelineControls';
 import TimelineRuler from './TimelineRuler';
 import TimelineLayer from './TimelineLayer';
@@ -65,10 +66,135 @@ const TimelineComponent = ({
   const API_BASE_URL = 'http://localhost:8080';
   const MIN_TIME_SCALE = 0.1;
   const MAX_TIME_SCALE = 200;
+  const MAGNETIC_THRESHOLD = 0.2; // Time in seconds for magnetic snap to playhead
 
   const timelineRef = useRef(null);
   const playheadRef = useRef(null);
   const playIntervalRef = useRef(null);
+
+  useEffect(() => {
+    const initializeWaveforms = async () => {
+      const token = localStorage.getItem('token');
+      audioLayers.forEach((layer, layerIndex) => {
+        layer.forEach(async (segment) => {
+          if (segment.waveformJsonPath && segment.type === 'audio') {
+            console.log(`Initializing waveform for segment.id: ${segment.id}`);
+            try {
+              const response = await axios.get(segment.waveformJsonPath, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              const waveformData = response.data;
+
+              const containerId = `waveform-segment-${segment.id}`;
+              const container = document.querySelector(`#${containerId}`);
+              if (!container) {
+                console.warn(`Waveform container #${containerId} not found for segment: ${segment.fileName}`);
+                return;
+              }
+
+              // Calculate full audio duration
+              const sampleRate = waveformData.sampleRate; // e.g., 44100 Hz
+              const peaks = waveformData.peaks;
+              const fullDuration = peaks.length / sampleRate; // Duration in seconds
+
+              // Get segment's time range
+              const startTime = segment.startTimeWithinAudio || 0;
+              const endTime = segment.endTimeWithinAudio || segment.duration;
+
+              // Validate time range
+              if (startTime < 0 || endTime > fullDuration || startTime >= endTime) {
+                console.warn(
+                  `Invalid time range for segment ${segment.id}: startTime=${startTime}, endTime=${endTime}, fullDuration=${fullDuration}`
+                );
+                return;
+              }
+
+              // Calculate indices for slicing peaks
+              const startIndex = Math.floor((startTime / fullDuration) * peaks.length);
+              const endIndex = Math.ceil((endTime / fullDuration) * peaks.length);
+              const slicedPeaks = peaks.slice(startIndex, endIndex);
+
+              const wavesurfer = WaveSurfer.create({
+                container: `#${containerId}`,
+                waveColor: '#00FFFF',
+                progressColor: '#FFFFFF',
+                height: 30,
+                normalize: true,
+                cursorWidth: 0,
+                barWidth: 2,
+                barGap: 1,
+              });
+
+              // Load waveform with sliced peaks
+              wavesurfer.load(segment.url, slicedPeaks, sampleRate);
+            } catch (error) {
+              console.error(`Error loading waveform for segment ${segment.id} (file: ${segment.fileName}):`, error);
+            }
+          }
+        });
+      });
+    };
+
+    if (audioLayers.length > 0 && audioLayers.some(layer => layer.length > 0)) {
+      initializeWaveforms();
+    }
+
+    return () => {
+      audioLayers.forEach((layer) => {
+        layer.forEach((segment) => {
+          const containerId = `waveform-segment-${segment.id}`;
+          const container = document.querySelector(`#${containerId}`);
+          if (container) {
+            container.innerHTML = '';
+          }
+        });
+      });
+    };
+  }, [audioLayers, projectId]);
+
+  useEffect(() => {
+    if (!isSplitMode || !timelineRef.current) return;
+
+    const handleMouseMove = (e) => {
+      const rect = timelineRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseTime = mouseX / timeScale;
+
+      if (Math.abs(mouseTime - currentTime) <= MAGNETIC_THRESHOLD) {
+        // Add magnetic class to playhead and timeline for cursor
+        if (playheadRef.current) {
+          playheadRef.current.classList.add('magnetic');
+        }
+        timelineRef.current.classList.add('magnetic-cursor');
+      } else {
+        // Remove magnetic class
+        if (playheadRef.current) {
+          playheadRef.current.classList.remove('magnetic');
+        }
+        timelineRef.current.classList.remove('magnetic-cursor');
+      }
+    };
+
+    const handleMouseLeave = () => {
+      // Reset playhead and cursor when leaving timeline
+      if (playheadRef.current) {
+        playheadRef.current.classList.remove('magnetic');
+      }
+      timelineRef.current.classList.remove('magnetic-cursor');
+    };
+
+    const timelineEl = timelineRef.current;
+    timelineEl.addEventListener('mousemove', handleMouseMove);
+    timelineEl.addEventListener('mouseleave', handleMouseLeave);
+
+    return () => {
+      timelineEl.removeEventListener('mousemove', handleMouseMove);
+      timelineEl.removeEventListener('mouseleave', handleMouseLeave);
+      if (timelineRef.current) {
+        timelineRef.current.classList.remove('magnetic-cursor');
+      }
+    };
+  }, [isSplitMode, currentTime, timeScale]);
 
   // Removed localIsPlaying state and sync logic
   const autoSave = useCallback(
@@ -347,13 +473,14 @@ const TimelineComponent = ({
               while (newAudioLayers.length <= layerIndex) newAudioLayers.push([]);
               const filename = audioSegment.audioFileName || audioSegment.audioPath.split('/').pop();
               const audioUrl = `${API_BASE_URL}/projects/${projectId}/audio/${encodeURIComponent(filename)}`;
-              // Construct waveform URL if waveformPath exists, else use default
-              const waveformImage = audioSegment.waveformPath
-                ? `${API_BASE_URL}/projects/${projectId}/waveforms/${encodeURIComponent(audioSegment.waveformPath.split('/').pop())}`
-                : '/images/audio.jpeg';
+              const waveformJsonPath = audioSegment.waveformJsonPath
+                ? `${API_BASE_URL}/projects/${projectId}/waveform-json/${encodeURIComponent(audioSegment.waveformJsonPath.split('/').pop())}`
+                : null;
               console.log(`Audio segment ID ${audioSegment.id}: no filters applied`);
+              // Sanitize audioSegment.id
+              const sanitizedId = audioSegment.id.replace(/[^a-zA-Z0-9]/g, '-');
               const newSegment = {
-                id: audioSegment.id,
+                id: sanitizedId,
                 type: 'audio',
                 fileName: filename,
                 url: audioUrl,
@@ -365,12 +492,12 @@ const TimelineComponent = ({
                 startTimeWithinAudio: audioSegment.startTime || 0,
                 endTimeWithinAudio: audioSegment.endTime || (audioSegment.timelineEndTime - audioSegment.timelineStartTime) || 0,
                 displayName: filename,
-                waveformImage: waveformImage,
+                waveformJsonPath: waveformJsonPath,
                 volume: audioSegment.volume || 1.0,
                 keyframes: audioSegment.keyframes || {},
-                isExtracted: audioSegment.isExtracted || false, // Include isExtracted from backend
+                isExtracted: audioSegment.isExtracted || false,
               };
-              console.log(`Created audio segment, ${audioSegment.id} with URL: ${audioUrl}, waveform: ${waveformImage}`, newSegment);
+              console.log(`Created audio segment, ${sanitizedId} with URL: ${audioUrl}, waveformJsonPath: ${waveformJsonPath}`, newSegment);
               newAudioLayers[layerIndex].push(newSegment);
             }
           } else {
@@ -659,10 +786,10 @@ const TimelineComponent = ({
         snapIndicators
       );
       if (audioDropResult && audioDropResult.newSegment) {
-        // Update waveformImage and isExtracted based on backend response
-        const waveformImage = audioDropResult.response.waveformPath
-          ? `${API_BASE_URL}/projects/${projectId}/waveforms/${encodeURIComponent(audioDropResult.response.waveformPath.split('/').pop())}`
-          : '/images/audio.jpeg';
+        // Update waveformJsonPath and isExtracted based on backend response
+        const waveformJsonPath = audioDropResult.response.waveformJsonPath
+          ? `${API_BASE_URL}/projects/${projectId}/waveform-json/${encodeURIComponent(audioDropResult.response.waveformJsonPath.split('/').pop())}`
+          : null;
         setAudioLayers((prevLayers) => {
           const newLayers = [...prevLayers];
           const layerIndex = Math.abs(audioDropResult.newSegment.layer) - 1;
@@ -670,7 +797,7 @@ const TimelineComponent = ({
             segment.id === audioDropResult.newSegment.id
               ? {
                   ...segment,
-                  waveformImage,
+                  waveformJsonPath,
                   isExtracted: audioDropResult.response.isExtracted || false, // Include isExtracted from backend
                 }
               : segment
@@ -869,7 +996,15 @@ const TimelineComponent = ({
     const rect = timelineRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
-    const clickTime = clickX / timeScale;
+    let clickTime = clickX / timeScale;
+
+    // Apply magnetic snapping to playhead in split mode
+    const isMagneticSnap = isSplitMode && Math.abs(clickTime - currentTime) <= MAGNETIC_THRESHOLD;
+    if (isMagneticSnap) {
+      clickTime = currentTime;
+      console.log('Magnetic snap: Adjusted clickTime to playhead at:', clickTime);
+    }
+
     const layerHeight = 40;
     const totalVideoLayers = videoLayers.length;
     const totalAudioLayers = audioLayers.length;
@@ -878,7 +1013,7 @@ const TimelineComponent = ({
     let clickedLayerIndex;
     let isAudioLayer = false;
 
-    console.log('handleTimelineClick: isSplitMode=', isSplitMode, 'clickTime=', clickTime, 'reversedIndex=', reversedIndex, 'totalVideoLayers=', totalVideoLayers, 'totalAudioLayers=', totalAudioLayers, 'clickX=', clickX, 'timeScale=', timeScale);
+    console.log('handleTimelineClick: isSplitMode=', isSplitMode, 'isMagneticSnap=', isMagneticSnap, 'clickTime=', clickTime, 'reversedIndex=', reversedIndex, 'totalVideoLayers=', totalVideoLayers, 'totalAudioLayers=', totalAudioLayers, 'clickX=', clickX, 'timeScale=', timeScale);
 
     // Check if the click is on the separator bar (audio-section-label)
     if (reversedIndex === totalVideoLayers + 1) {
@@ -950,7 +1085,7 @@ const TimelineComponent = ({
 
     // In split mode, prioritize the clicked segment for splitting
     if (isSplitMode && foundItem) {
-      console.log('Split mode active, splitting segment:', foundItem.id, 'type:', foundItem.type);
+      console.log('Split mode active, splitting segment:', foundItem.id, 'type:', foundItem.type, 'at time:', clickTime);
       if (foundItem.type === 'video') {
         console.log('Splitting video:', foundItem.id);
         await videoHandler.handleVideoSplit(foundItem, clickTime, clickedLayerIndex);
